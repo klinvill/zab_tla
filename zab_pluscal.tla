@@ -1,6 +1,6 @@
 ---- MODULE zab_pluscal ----
 
-EXTENDS Sequences, Integers
+EXTENDS Sequences, Integers, TLC
 
 
 \* Set of server IDs
@@ -25,16 +25,16 @@ define
     \*** Helper operators for the Zab message queue, written in TLA+ for potential extraction to a new module
 
     \* returns a tuple of <<message, messages>> where messages is the updated messages structure without the received message
-    Send(to, m, messages) == [messages EXCEPT ![to] = Append(messages[to], m)]
+    Send(to, m, _messages) == [_messages EXCEPT ![to] = Append(_messages[to], m)]
 
     \* returns a tuple of <<message, messages>> where messages is the updated messages structure without the received message
-    Recv(server, messages) == <<Head(messages[server]), [messages EXCEPT ![server] = Tail(messages[server])]>>
+    Recv(server, _messages) == <<Head(_messages[server]), [_messages EXCEPT ![server] = Tail(_messages[server])]>>
 
-    CanRecv(server, messages) == Len(messages[server]) > 0
+    CanRecv(server, _messages) == Len(_messages[server]) > 0
 
     Message(from, type, contents) == [from |-> from, type |-> type, contents |-> contents]
 
-    
+
     \*** Phase 0: Leader oracle
 
     \* TODO: does the oracle only produce a single result for each epoch? How should the leader oracle best be represented?
@@ -53,7 +53,7 @@ macro DoRecv()
 begin
     assert CanRecv(self, messages);
     \* TODO: is there a more elegant way to get the next value from a sequence while removing it?
-    message := Recv(self)[1] || messages := Recv(self)[2];
+    message := Recv(self, messages)[1] || messages := Recv(self, messages)[2];
 end macro;
 
 \* Follower Phase 1: Discovery
@@ -89,24 +89,26 @@ variables state = Follower,    \* Current state of the server
           candidate;            \* Candidate selected by leader oracle
 begin
     GetCandidate:
-        candidate := LeaderOracle(last_epoch + 1)
+        candidate := LeaderOracle(last_epoch + 1);
     Discover:
-        FP1(Candidate)
-end process; 
+        if candidate /= self then
+            call FP1(Candidate);
+        end if;
+end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "cb825187" /\ chksum(tla) = "2f81fe9a")
+\* BEGIN TRANSLATION (chksum(pcal) = "694bda9e" /\ chksum(tla) = "b4a242a")
 \* Process variable candidate of process server at line 89 col 11 changed to candidate_
 CONSTANT defaultInitValue
 VARIABLES messages, pc, stack
 
 (* define statement *)
-Send(to, m, messages) == [messages EXCEPT ![to] = Append(messages[to], m)]
+Send(to, m, _messages) == [_messages EXCEPT ![to] = Append(_messages[to], m)]
 
 
-Recv(server, messages) == <<Head(messages[server]), [messages EXCEPT ![server] = Tail(messages[server])]>>
+Recv(server, _messages) == <<Head(_messages[server]), [_messages EXCEPT ![server] = Tail(_messages[server])]>>
 
-CanRecv(server, messages) == Len(messages[server]) > 0
+CanRecv(server, _messages) == Len(_messages[server]) > 0
 
 Message(from, type, contents) == [from |-> from, type |-> type, contents |-> contents]
 
@@ -117,10 +119,10 @@ Message(from, type, contents) == [from |-> from, type |-> type, contents |-> con
 
 LeaderOracle(epoch) == CHOOSE s \in Servers : TRUE
 
-VARIABLES candidate, message, state, last_epoch, last_leader, history, zxid, 
+VARIABLES candidate, message, state, last_epoch, last_leader, history, zxid,
           candidate_
 
-vars == << messages, pc, stack, candidate, message, state, last_epoch, 
+vars == << messages, pc, stack, candidate, message, state, last_epoch,
            last_leader, history, zxid, candidate_ >>
 
 ProcSet == (Servers)
@@ -143,17 +145,17 @@ Init == (* Global variables *)
 Notify(self) == /\ pc[self] = "Notify"
                 /\ messages' = Send(candidate[self], (Message(self, CEPOCH, [last_epoch |-> last_epoch[self]])), messages)
                 /\ pc' = [pc EXCEPT ![self] = "GetMessage"]
-                /\ UNCHANGED << stack, candidate, message, state, last_epoch, 
+                /\ UNCHANGED << stack, candidate, message, state, last_epoch,
                                 last_leader, history, zxid, candidate_ >>
 
 GetMessage(self) == /\ pc[self] = "GetMessage"
                     /\ CanRecv(self, messages)
-                    /\ Assert(CanRecv(self, messages), 
+                    /\ Assert(CanRecv(self, messages),
                               "Failure of assertion at line 54, column 5 of macro called at line 67, column 9.")
-                    /\ /\ message' = [message EXCEPT ![self] = Recv(self)[1]]
-                       /\ messages' = Recv(self)[2]
+                    /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
+                       /\ messages' = Recv(self, messages)[2]
                     /\ pc' = [pc EXCEPT ![self] = "HandleMessage"]
-                    /\ UNCHANGED << stack, candidate, state, last_epoch, 
+                    /\ UNCHANGED << stack, candidate, state, last_epoch,
                                     last_leader, history, zxid, candidate_ >>
 
 HandleMessage(self) == /\ pc[self] = "HandleMessage"
@@ -162,12 +164,12 @@ HandleMessage(self) == /\ pc[self] = "HandleMessage"
                                         THEN /\ last_epoch' = [last_epoch EXCEPT ![self] = message[self].epoch]
                                              /\ messages' = Send(candidate[self], (Message(self, ACK_E, [last_leader |-> last_leader[self], history |-> history[self]])), messages)
                                         ELSE /\ TRUE
-                                             /\ UNCHANGED << messages, 
+                                             /\ UNCHANGED << messages,
                                                              last_epoch >>
                                   /\ pc' = [pc EXCEPT ![self] = "End"]
                              ELSE /\ pc' = [pc EXCEPT ![self] = "GetMessage"]
                                   /\ UNCHANGED << messages, last_epoch >>
-                       /\ UNCHANGED << stack, candidate, message, state, 
+                       /\ UNCHANGED << stack, candidate, message, state,
                                        last_leader, history, zxid, candidate_ >>
 
 End(self) == /\ pc[self] = "End"
@@ -175,22 +177,35 @@ End(self) == /\ pc[self] = "End"
              /\ message' = [message EXCEPT ![self] = Head(stack[self]).message]
              /\ candidate' = [candidate EXCEPT ![self] = Head(stack[self]).candidate]
              /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
-             /\ UNCHANGED << messages, state, last_epoch, last_leader, history, 
+             /\ UNCHANGED << messages, state, last_epoch, last_leader, history,
                              zxid, candidate_ >>
 
 FP1(self) == Notify(self) \/ GetMessage(self) \/ HandleMessage(self)
                 \/ End(self)
 
 GetCandidate(self) == /\ pc[self] = "GetCandidate"
-                      /\ candidate_' = [candidate_ EXCEPT ![self] =                  LeaderOracle(last_epoch[self] + 1)
-                                                                    Discover:
-                                                                        FP1(Candidate)]
-                      /\ pc' = [pc EXCEPT ![self] = "Done"]
-                      /\ UNCHANGED << messages, stack, candidate, message, 
-                                      state, last_epoch, last_leader, history, 
+                      /\ candidate_' = [candidate_ EXCEPT ![self] = LeaderOracle(last_epoch[self] + 1)]
+                      /\ pc' = [pc EXCEPT ![self] = "Discover"]
+                      /\ UNCHANGED << messages, stack, candidate, message,
+                                      state, last_epoch, last_leader, history,
                                       zxid >>
 
-server(self) == GetCandidate(self)
+Discover(self) == /\ pc[self] = "Discover"
+                  /\ IF candidate_[self] /= self
+                        THEN /\ /\ candidate' = [candidate EXCEPT ![self] = Candidate]
+                                /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "FP1",
+                                                                         pc        |->  "Done",
+                                                                         message   |->  message[self],
+                                                                         candidate |->  candidate[self] ] >>
+                                                                     \o stack[self]]
+                             /\ message' = [message EXCEPT ![self] = defaultInitValue]
+                             /\ pc' = [pc EXCEPT ![self] = "Notify"]
+                        ELSE /\ pc' = [pc EXCEPT ![self] = "Done"]
+                             /\ UNCHANGED << stack, candidate, message >>
+                  /\ UNCHANGED << messages, state, last_epoch, last_leader,
+                                  history, zxid, candidate_ >>
+
+server(self) == GetCandidate(self) \/ Discover(self)
 
 (* Allow infinite stuttering to prevent deadlock on termination. *)
 Terminating == /\ \A self \in ProcSet: pc[self] = "Done"
@@ -204,6 +219,6 @@ Spec == Init /\ [][Next]_vars
 
 Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
-\* END TRANSLATION 
+\* END TRANSLATION
 
 ====
