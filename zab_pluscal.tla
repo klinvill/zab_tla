@@ -32,7 +32,16 @@ define
 
     CanRecv(server, _messages) == Len(_messages[server]) > 0
 
-    Message(from, type, contents) == [from |-> from, type |-> type, contents |-> contents]
+    \* Message types:
+    CepochMessage(from, last_epoch) == [from |-> from, type |-> CEPOCH, last_epoch |-> last_epoch]
+    NewEpochMessage(from, epoch) == [from |-> from, type |-> NEWEPOCH, epoch |-> epoch]
+    AckEpochMessage(from, last_leader, history) == [from |-> from, type |-> ACK_E, last_leader |-> last_leader, history |-> history]
+    \* TODO: do we need a generic Message type? The paxos TLA spec uses Messages to represent the set of all possible messages, and then
+    \*  introduces a TypeOK variant to check that every message is one of those types:
+    \*  https://github.com/tlaplus/Examples/blob/master/specifications/PaxosHowToWinATuringAward/Paxos.tla#L67
+    \* Message == CepochMessage(from, last_epoch)
+    \*     \union NewEpochMessage(from, epoch)
+    \*     \union AckEpochMessage(from, last_leader, history)
 
 
     \*** Other Helpers
@@ -72,7 +81,7 @@ procedure FP1(candidate)
 variable message
 begin
     Notify:
-        DoSend(candidate, Message(self, CEPOCH, [last_epoch |-> last_epoch]));
+        DoSend(candidate, CepochMessage(self, last_epoch));
     GetMessage:
         await CanRecv(self, messages);
         DoRecv();
@@ -80,7 +89,7 @@ begin
         if message.type = NEWEPOCH /\ message.from = candidate then
             if last_epoch < message.epoch then
                 last_epoch := message.epoch;
-                DoSend(candidate, Message(self, ACK_E, [last_leader |-> last_leader, history |-> history]));
+                DoSend(candidate, AckEpochMessage(self, last_leader, history));
             end if;
         else
             \* TODO: under what conditions should we not check for the next message, e.g. restart leader election?
@@ -119,7 +128,7 @@ begin
         i := 1;
     NewEpoch:
         while i <= DOMAIN followers do
-            DoSend(followers[i], Message(self, NEWEPOCH, [epoch |-> latest_epoch]));
+            DoSend(followers[i], NewEpochMessage(self, epoch));
             i := i+1;
         end while;
     HistorySelection:
@@ -158,16 +167,18 @@ begin
     Discover:
         if candidate /= self then
             call FP1(Candidate);
+        else
+            call LP1();
         end if;
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "c89d7ce6" /\ chksum(tla) = "68537026")
-\* Label GetMessage of procedure FP1 at line 77 col 9 changed to GetMessage_
-\* Label HandleMessage of procedure FP1 at line 80 col 9 changed to HandleMessage_
-\* Label End of procedure FP1 at line 90 col 9 changed to End_
-\* Process variable candidate of process server at line 154 col 11 changed to candidate_
-\* Procedure variable message of procedure FP1 at line 72 col 10 changed to message_
+\* BEGIN TRANSLATION (chksum(pcal) = "e714bf92" /\ chksum(tla) = "38cf4122")
+\* Label GetMessage of procedure FP1 at line 86 col 9 changed to GetMessage_
+\* Label HandleMessage of procedure FP1 at line 89 col 9 changed to HandleMessage_
+\* Label End of procedure FP1 at line 99 col 9 changed to End_
+\* Process variable candidate of process server at line 163 col 11 changed to candidate_
+\* Procedure variable message of procedure FP1 at line 81 col 10 changed to message_
 CONSTANT defaultInitValue
 VARIABLES messages, pc, stack
 
@@ -179,7 +190,16 @@ Recv(server, _messages) == <<Head(_messages[server]), [_messages EXCEPT ![server
 
 CanRecv(server, _messages) == Len(_messages[server]) > 0
 
-Message(from, type, contents) == [from |-> from, type |-> type, contents |-> contents]
+
+CepochMessage(from, last_epoch) == [from |-> from, type |-> CEPOCH, last_epoch |-> last_epoch]
+NewEpochMessage(from, epoch) == [from |-> from, type |-> NEWEPOCH, epoch |-> epoch]
+AckEpochMessage(from, last_leader, history) == [from |-> from, type |-> ACK_E, last_leader |-> last_leader, history |-> history]
+
+
+
+
+
+
 
 
 
@@ -232,7 +252,7 @@ Init == (* Global variables *)
         /\ pc = [self \in ProcSet |-> "GetCandidate"]
 
 Notify(self) == /\ pc[self] = "Notify"
-                /\ messages' = Send(candidate[self], (Message(self, CEPOCH, [last_epoch |-> last_epoch[self]])), messages)
+                /\ messages' = Send(candidate[self], (CepochMessage(self, last_epoch[self])), messages)
                 /\ pc' = [pc EXCEPT ![self] = "GetMessage_"]
                 /\ UNCHANGED << stack, candidate, message_, followers,
                                 confirmed, message, latest_epoch,
@@ -242,7 +262,7 @@ Notify(self) == /\ pc[self] = "Notify"
 GetMessage_(self) == /\ pc[self] = "GetMessage_"
                      /\ CanRecv(self, messages)
                      /\ Assert(CanRecv(self, messages),
-                               "Failure of assertion at line 65, column 5 of macro called at line 78, column 9.")
+                               "Failure of assertion at line 74, column 5 of macro called at line 87, column 9.")
                      /\ /\ message_' = [message_ EXCEPT ![self] = Recv(self, messages)[1]]
                         /\ messages' = Recv(self, messages)[2]
                      /\ pc' = [pc EXCEPT ![self] = "HandleMessage_"]
@@ -255,7 +275,7 @@ HandleMessage_(self) == /\ pc[self] = "HandleMessage_"
                         /\ IF message_[self].type = NEWEPOCH /\ message_[self].from = candidate[self]
                               THEN /\ IF last_epoch[self] < message_[self].epoch
                                          THEN /\ last_epoch' = [last_epoch EXCEPT ![self] = message_[self].epoch]
-                                              /\ messages' = Send(candidate[self], (Message(self, ACK_E, [last_leader |-> last_leader[self], history |-> history[self]])), messages)
+                                              /\ messages' = Send(candidate[self], (AckEpochMessage(self, last_leader[self], history[self])), messages)
                                          ELSE /\ TRUE
                                               /\ UNCHANGED << messages,
                                                               last_epoch >>
@@ -285,7 +305,7 @@ GatherQuorum(self) == /\ pc[self] = "GatherQuorum"
                             THEN /\ pc' = [pc EXCEPT ![self] = "GetMessage"]
                                  /\ i' = i
                             ELSE /\ Assert(IsQuorum(followers[self], Servers),
-                                           "Failure of assertion at line 118, column 9.")
+                                           "Failure of assertion at line 127, column 9.")
                                  /\ i' = [i EXCEPT ![self] = 1]
                                  /\ pc' = [pc EXCEPT ![self] = "NewEpoch"]
                       /\ UNCHANGED << messages, stack, candidate, message_,
@@ -297,7 +317,7 @@ GatherQuorum(self) == /\ pc[self] = "GatherQuorum"
 GetMessage(self) == /\ pc[self] = "GetMessage"
                     /\ CanRecv(self, messages)
                     /\ Assert(CanRecv(self, messages),
-                              "Failure of assertion at line 65, column 5 of macro called at line 106, column 17.")
+                              "Failure of assertion at line 74, column 5 of macro called at line 115, column 17.")
                     /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
                        /\ messages' = Recv(self, messages)[2]
                     /\ pc' = [pc EXCEPT ![self] = "HandleMessage"]
@@ -323,7 +343,7 @@ HandleMessage(self) == /\ pc[self] = "HandleMessage"
 
 NewEpoch(self) == /\ pc[self] = "NewEpoch"
                   /\ IF i[self] <= DOMAIN followers[self]
-                        THEN /\ messages' = Send((followers[self][i[self]]), (Message(self, NEWEPOCH, [epoch |-> latest_epoch[self]])), messages)
+                        THEN /\ messages' = Send((followers[self][i[self]]), (NewEpochMessage(self, epoch)), messages)
                              /\ i' = [i EXCEPT ![self] = i[self]+1]
                              /\ pc' = [pc EXCEPT ![self] = "NewEpoch"]
                         ELSE /\ pc' = [pc EXCEPT ![self] = "HistorySelection"]
@@ -346,7 +366,7 @@ HistorySelection(self) == /\ pc[self] = "HistorySelection"
 GetAck(self) == /\ pc[self] = "GetAck"
                 /\ CanRecv(self, messages)
                 /\ Assert(CanRecv(self, messages),
-                          "Failure of assertion at line 65, column 5 of macro called at line 129, column 17.")
+                          "Failure of assertion at line 74, column 5 of macro called at line 138, column 17.")
                 /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
                    /\ messages' = Recv(self, messages)[2]
                 /\ pc' = [pc EXCEPT ![self] = "HandleAck"]
@@ -406,12 +426,27 @@ Discover(self) == /\ pc[self] = "Discover"
                                                                      \o stack[self]]
                              /\ message_' = [message_ EXCEPT ![self] = defaultInitValue]
                              /\ pc' = [pc EXCEPT ![self] = "Notify"]
-                        ELSE /\ pc' = [pc EXCEPT ![self] = "Done"]
-                             /\ UNCHANGED << stack, candidate, message_ >>
-                  /\ UNCHANGED << messages, followers, confirmed, message,
-                                  latest_epoch, selected_history, i, state,
-                                  last_epoch, last_leader, history, zxid,
-                                  candidate_ >>
+                             /\ UNCHANGED << followers, confirmed, message,
+                                             latest_epoch, selected_history, i >>
+                        ELSE /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "LP1",
+                                                                      pc        |->  "Done",
+                                                                      followers |->  followers[self],
+                                                                      confirmed |->  confirmed[self],
+                                                                      message   |->  message[self],
+                                                                      latest_epoch |->  latest_epoch[self],
+                                                                      selected_history |->  selected_history[self],
+                                                                      i         |->  i[self] ] >>
+                                                                  \o stack[self]]
+                             /\ followers' = [followers EXCEPT ![self] = <<>>]
+                             /\ confirmed' = [confirmed EXCEPT ![self] = {}]
+                             /\ message' = [message EXCEPT ![self] = defaultInitValue]
+                             /\ latest_epoch' = [latest_epoch EXCEPT ![self] = last_epoch[self]]
+                             /\ selected_history' = [selected_history EXCEPT ![self] = [last_leader |-> 0, history |-> <<>>]]
+                             /\ i' = [i EXCEPT ![self] = defaultInitValue]
+                             /\ pc' = [pc EXCEPT ![self] = "GatherQuorum"]
+                             /\ UNCHANGED << candidate, message_ >>
+                  /\ UNCHANGED << messages, state, last_epoch, last_leader,
+                                  history, zxid, candidate_ >>
 
 server(self) == GetCandidate(self) \/ Discover(self)
 
