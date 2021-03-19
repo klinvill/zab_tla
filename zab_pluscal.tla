@@ -306,13 +306,13 @@ begin
                 call FP1_1();
             or
                 \* Note: it looks like pluscal needs the await in the either statement in order to decide whether or not to enable that action. It cannot be in the procedure.
-                await /\ follower_step = FS_1_2
+                await   /\ follower_step = FS_1_2
                         /\ CanRecv(self, messages)
                         /\ Head(messages[self]).type = NEWEPOCH
                         /\ Head(messages[self]).from = candidate;
                 call FP1_2();
             or
-                await /\ candidate = self
+                await   /\ candidate = self
                         /\ leader_step = LS_1_1
                         /\ CanRecv(self, messages)
                         /\ Head(messages[self]).type = CEPOCH;
@@ -326,7 +326,7 @@ begin
 
                 call LP1_1();
             or
-                await /\ candidate = self
+                await   /\ candidate = self
                         /\ leader_step = LS_1_2
                         /\ CanRecv(self, messages)
                         /\ Head(messages[self]).type = ACK_E
@@ -335,7 +335,7 @@ begin
 
             \*** Phase 2: Synchronization
             or
-                await /\ follower_step = FS_2_1
+                await   /\ follower_step = FS_2_1
                         /\ CanRecv(self, messages)
                         /\ Head(messages[self]).type = NEWLEADER
                         /\ Head(messages[self]).from = candidate;
@@ -345,18 +345,18 @@ begin
                         follower_step := FS_1_1;
                     end if;
             or
-                await /\ follower_step = FS_2_1
+                await   /\ follower_step = FS_2_1
                         /\ CanRecv(self, messages)
                         /\ Head(messages[self]).type = COMMIT_LD
                         /\ Head(messages[self]).from = candidate;
                 call FP2_2();
             or
-                await /\ candidate = self
+                await   /\ candidate = self
                         /\ leader_step = LS_2_1;
 
                 call LP2_1();
             or
-                await /\ candidate = self
+                await   /\ candidate = self
                         /\ leader_step = LS_2_2
                         /\ CanRecv(self, messages)
                         /\ Head(messages[self]).type = ACK_LD
@@ -367,7 +367,7 @@ begin
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "1e21f588" /\ chksum(tla) = "2f26937d")
+\* BEGIN TRANSLATION (chksum(pcal) = "1e21f588" /\ chksum(tla) = "91ce9325")
 \* Label GetMessage of procedure FP1_2 at line 113 col 5 changed to GetMessage_
 \* Label HandleMessage of procedure FP1_2 at line 137 col 9 changed to HandleMessage_
 \* Label GetMessage of procedure LP1_1 at line 113 col 5 changed to GetMessage_L
@@ -842,9 +842,9 @@ RunStep(self) == /\ pc[self] = "RunStep"
                        /\ pc' = [pc EXCEPT ![self] = "Notify"]
                        /\ UNCHANGED <<message_, message_L, i_, message_LP, i_L, message_F, message_FP, i_LP, message, i, followers, selected_history, new_epoch, ackd_e, ackd_ld>>
                     \/ /\ /\ follower_step[self] = FS_1_2
-                            /\ CanRecv(self, messages)
-                            /\ Head(messages[self]).type = NEWEPOCH
-                            /\ Head(messages[self]).from = candidate[self]
+                          /\ CanRecv(self, messages)
+                          /\ Head(messages[self]).type = NEWEPOCH
+                          /\ Head(messages[self]).from = candidate[self]
                        /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "FP1_2",
                                                                 pc        |->  "RunStep",
                                                                 message_  |->  message_[self] ] >>
@@ -853,9 +853,9 @@ RunStep(self) == /\ pc[self] = "RunStep"
                        /\ pc' = [pc EXCEPT ![self] = "GetMessage_"]
                        /\ UNCHANGED <<message_L, i_, message_LP, i_L, message_F, message_FP, i_LP, message, i, followers, selected_history, new_epoch, ackd_e, ackd_ld>>
                     \/ /\ /\ candidate[self] = self
-                            /\ leader_step[self] = LS_1_1
-                            /\ CanRecv(self, messages)
-                            /\ Head(messages[self]).type = CEPOCH
+                          /\ leader_step[self] = LS_1_1
+                          /\ CanRecv(self, messages)
+                          /\ Head(messages[self]).type = CEPOCH
                        /\ followers' = [followers EXCEPT ![self] = <<>>]
                        /\ selected_history' = [selected_history EXCEPT ![self] = [last_leader |-> 0, history |-> <<>>]]
                        /\ new_epoch' = [new_epoch EXCEPT ![self] = last_epoch[self]]
@@ -871,10 +871,10 @@ RunStep(self) == /\ pc[self] = "RunStep"
                        /\ pc' = [pc EXCEPT ![self] = "GetMessage_L"]
                        /\ UNCHANGED <<message_, message_LP, i_L, message_F, message_FP, i_LP, message, i>>
                     \/ /\ /\ candidate[self] = self
-                            /\ leader_step[self] = LS_1_2
-                            /\ CanRecv(self, messages)
-                            /\ Head(messages[self]).type = ACK_E
-                            /\ Head(messages[self]).epoch = new_epoch[self]
+                          /\ leader_step[self] = LS_1_2
+                          /\ CanRecv(self, messages)
+                          /\ Head(messages[self]).type = ACK_E
+                          /\ Head(messages[self]).epoch = new_epoch[self]
                        /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "LP1_2",
                                                                 pc        |->  "RunStep",
                                                                 message_LP |->  message_LP[self],
@@ -885,9 +885,9 @@ RunStep(self) == /\ pc[self] = "RunStep"
                        /\ pc' = [pc EXCEPT ![self] = "GetMessage"]
                        /\ UNCHANGED <<message_, message_L, i_, message_F, message_FP, i_LP, message, i, followers, selected_history, new_epoch, ackd_e, ackd_ld>>
                     \/ /\ /\ follower_step[self] = FS_2_1
-                            /\ CanRecv(self, messages)
-                            /\ Head(messages[self]).type = NEWLEADER
-                            /\ Head(messages[self]).from = candidate[self]
+                          /\ CanRecv(self, messages)
+                          /\ Head(messages[self]).type = NEWLEADER
+                          /\ Head(messages[self]).from = candidate[self]
                        /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "FP2_1",
                                                                 pc        |->  "CheckRestart",
                                                                 message_F |->  message_F[self] ] >>
@@ -896,9 +896,9 @@ RunStep(self) == /\ pc[self] = "RunStep"
                        /\ pc' = [pc EXCEPT ![self] = "GetNewLeaderMessage"]
                        /\ UNCHANGED <<message_, message_L, i_, message_LP, i_L, message_FP, i_LP, message, i, followers, selected_history, new_epoch, ackd_e, ackd_ld>>
                     \/ /\ /\ follower_step[self] = FS_2_1
-                            /\ CanRecv(self, messages)
-                            /\ Head(messages[self]).type = COMMIT_LD
-                            /\ Head(messages[self]).from = candidate[self]
+                          /\ CanRecv(self, messages)
+                          /\ Head(messages[self]).type = COMMIT_LD
+                          /\ Head(messages[self]).from = candidate[self]
                        /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "FP2_2",
                                                                 pc        |->  "RunStep",
                                                                 message_FP |->  message_FP[self] ] >>
@@ -907,7 +907,7 @@ RunStep(self) == /\ pc[self] = "RunStep"
                        /\ pc' = [pc EXCEPT ![self] = "GetCommitMessage"]
                        /\ UNCHANGED <<message_, message_L, i_, message_LP, i_L, message_F, i_LP, message, i, followers, selected_history, new_epoch, ackd_e, ackd_ld>>
                     \/ /\ /\ candidate[self] = self
-                            /\ leader_step[self] = LS_2_1
+                          /\ leader_step[self] = LS_2_1
                        /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "LP2_1",
                                                                 pc        |->  "RunStep",
                                                                 i_LP      |->  i_LP[self] ] >>
@@ -916,10 +916,10 @@ RunStep(self) == /\ pc[self] = "RunStep"
                        /\ pc' = [pc EXCEPT ![self] = "LP2Start"]
                        /\ UNCHANGED <<message_, message_L, i_, message_LP, i_L, message_F, message_FP, message, i, followers, selected_history, new_epoch, ackd_e, ackd_ld>>
                     \/ /\ /\ candidate[self] = self
-                            /\ leader_step[self] = LS_2_2
-                            /\ CanRecv(self, messages)
-                            /\ Head(messages[self]).type = ACK_LD
-                            /\ Head(messages[self]).epoch = new_epoch[self]
+                          /\ leader_step[self] = LS_2_2
+                          /\ CanRecv(self, messages)
+                          /\ Head(messages[self]).type = ACK_LD
+                          /\ Head(messages[self]).epoch = new_epoch[self]
                        /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "LP2_2",
                                                                 pc        |->  "RunStep",
                                                                 message   |->  message[self],
