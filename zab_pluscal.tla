@@ -343,6 +343,22 @@ begin
         return;
 end procedure;
 
+procedure LeaderAddFollowerToQuorum()
+begin
+    GetAckNewLeaderMessage:
+        await   /\ CanRecv(self, messages)
+                /\ Head(messages[self]).type = ACK_LD;
+        DoRecv();
+    HandleAckLeader:
+        if message.epoch = new_epoch then
+            DoSend(message.from, CommitLeaderMessage(self, new_epoch));
+            \* TODO: can we make followers a set?
+            followers := Append(followers, message.from);
+        end if;
+
+    return;
+end procedure;
+
 \* Models follower thread for each process
 process follower \in Servers
 variables last_epoch = 0,       \* Last new epoch proposol acknowledged
@@ -423,13 +439,15 @@ begin
                         call LeaderCommit();
                     or
                         call LeaderSetupNewFollower();
+                    or
+                        call LeaderAddFollowerToQuorum();
                     end either
             end while;
     end if;
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "3a9aa19" /\ chksum(tla) = "1fea021e")
+\* BEGIN TRANSLATION (chksum(pcal) = "5f99cd6a" /\ chksum(tla) = "a56878db")
 \* Label GetMessage of procedure FP1 at line 112 col 9 changed to GetMessage_
 \* Label HandleMessage of procedure FP1 at line 115 col 9 changed to HandleMessage_
 \* Label End of procedure FP1 at line 125 col 9 changed to End_
@@ -442,8 +460,8 @@ end algorithm; *)
 \* Label End of procedure LP2 at line 245 col 9 changed to End_LP
 \* Label End of procedure LeaderCommit at line 322 col 9 changed to End_Le
 \* Label End of procedure LeaderSetupNewFollower at line 343 col 9 changed to End_Lea
-\* Label GetCandidate of process follower at line 362 col 9 changed to GetCandidate_
-\* Process variable candidate of process follower at line 353 col 11 changed to candidate_
+\* Label GetCandidate of process follower at line 378 col 9 changed to GetCandidate_
+\* Process variable candidate of process follower at line 369 col 11 changed to candidate_
 \* Procedure variable message of procedure FP1 at line 107 col 10 changed to message_
 \* Procedure variable confirmed of procedure LP1 at line 130 col 11 changed to confirmed_
 CONSTANT defaultInitValue
@@ -1133,6 +1151,41 @@ LeaderSetupNewFollower(self) == GetCepochMessage(self)
                                    \/ SendNewEpoch(self)
                                    \/ SendNewLeader(self) \/ End_Lea(self)
 
+GetAckNewLeaderMessage(self) == /\ pc[self] = "GetAckNewLeaderMessage"
+                                /\ /\ CanRecv(self, messages)
+                                   /\ Head(messages[self]).type = ACK_LD
+                                /\ Assert(CanRecv(self, messages),
+                                          "Failure of assertion at line 100, column 5 of macro called at line 351, column 9.")
+                                /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
+                                   /\ messages' = Recv(self, messages)[2]
+                                /\ pc' = [pc EXCEPT ![self] = "HandleAckLeader"]
+                                /\ UNCHANGED << stack, message_, confirmed_, i,
+                                                confirmed, v, last_epoch,
+                                                last_leader, history, zxid,
+                                                candidate_, delivered, restart,
+                                                ready, candidate, followers,
+                                                selected_history, new_epoch,
+                                                counter, proposed,
+                                                proposal_acks >>
+
+HandleAckLeader(self) == /\ pc[self] = "HandleAckLeader"
+                         /\ IF message[self].epoch = new_epoch[self]
+                               THEN /\ messages' = Send((message[self].from), (CommitLeaderMessage(self, new_epoch[self])), messages)
+                                    /\ followers' = [followers EXCEPT ![self] = Append(followers[self], message[self].from)]
+                               ELSE /\ TRUE
+                                    /\ UNCHANGED << messages, followers >>
+                         /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
+                         /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
+                         /\ UNCHANGED << message_, confirmed_, message, i,
+                                         confirmed, v, last_epoch, last_leader,
+                                         history, zxid, candidate_, delivered,
+                                         restart, ready, candidate,
+                                         selected_history, new_epoch, counter,
+                                         proposed, proposal_acks >>
+
+LeaderAddFollowerToQuorum(self) == GetAckNewLeaderMessage(self)
+                                      \/ HandleAckLeader(self)
+
 GetCandidate_(self) == /\ pc[self] = "GetCandidate_"
                        /\ candidate_' = [candidate_ EXCEPT ![self] = LeaderOracle(last_epoch[self] + 1)]
                        /\ pc' = [pc EXCEPT ![self] = "FollowerDiscover"]
@@ -1321,6 +1374,11 @@ LeaderBroadcastStep(self) == /\ pc[self] = "LeaderBroadcastStep"
                                                                         \o stack[self]]
                                    /\ pc' = [pc EXCEPT ![self] = "GetCepochMessage"]
                                    /\ v' = v
+                                \/ /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "LeaderAddFollowerToQuorum",
+                                                                            pc        |->  "LeaderBroadcast" ] >>
+                                                                        \o stack[self]]
+                                   /\ pc' = [pc EXCEPT ![self] = "GetAckNewLeaderMessage"]
+                                   /\ v' = v
                              /\ UNCHANGED << messages, message_, confirmed_,
                                              message, i, confirmed, last_epoch,
                                              last_leader, history, zxid,
@@ -1341,7 +1399,8 @@ Next == (\E self \in ProcSet:  \/ FP1(self) \/ LP1(self) \/ FP2(self)
                                \/ LP2(self) \/ FollowerBroadcastAccept(self)
                                \/ FollowerBroadcastCommit(self)
                                \/ LeaderPropose(self) \/ LeaderCommit(self)
-                               \/ LeaderSetupNewFollower(self))
+                               \/ LeaderSetupNewFollower(self)
+                               \/ LeaderAddFollowerToQuorum(self))
            \/ (\E self \in Servers: follower(self))
            \/ (\E self \in Servers: leader(self))
            \/ Terminating
