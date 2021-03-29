@@ -6,9 +6,6 @@ EXTENDS Sequences, Integers, TLC, FiniteSets
 \* Set of server IDs
 CONSTANTS Servers
 
-\* Server states
-CONSTANTS Follower, Candidate, Leader
-
 \* Message types, correspond to those in the "Dissecting Zab" tech report
 CONSTANTS CEPOCH, NEWEPOCH, ACK_E,
           NEWLEADER, ACK_LD, COMMIT_LD,
@@ -21,6 +18,7 @@ CONSTANTS Values
 CONSTANTS MAX_COUNTER
 CONSTANTS MAX_EPOCHS
 CONSTANTS MAX_HISTORY_LENGTH
+CONSTANTS MAX_MESSAGES
 
 (* --algorithm zab_algo
 
@@ -39,7 +37,7 @@ define
     Transaction(value, zxid) == [value |-> value, zxid |-> zxid]
 
     \*** Types:
-    Epochs == 1..MAX_EPOCHS
+    Epochs == 0..MAX_EPOCHS
     Counters == 0..MAX_COUNTER
     Zxids == {Zxid(epoch, counter) : epoch \in Epochs, counter \in Counters}
     Transactions == {Transaction(value, zxid) : value \in Values, zxid \in Zxids}
@@ -106,6 +104,11 @@ define
     \* TODO: does the oracle only produce a single result for each epoch? How should the leader oracle best be represented?
     \* TODO: should we include a refinement that chooses the server with the latest zxid (as used in the zookeeper implemenation)?
     LeaderOracle(epoch) == CHOOSE s \in Servers : TRUE
+
+
+    \* Type invariant checks
+    TypeOK == messages \in [Servers -> UNION {[1..m -> MessageType] : m \in 0..MAX_MESSAGES}]
+
 end define;
 
 \* Wraps the Send() operator to update the messages structure
@@ -467,23 +470,23 @@ begin
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "f2dc7784" /\ chksum(tla) = "5e76c809")
-\* Label GetMessage of procedure FP1 at line 132 col 9 changed to GetMessage_
-\* Label HandleMessage of procedure FP1 at line 135 col 9 changed to HandleMessage_
-\* Label End of procedure FP1 at line 145 col 9 changed to End_
-\* Label GetAck of procedure LP1 at line 180 col 17 changed to GetAck_
-\* Label HandleAck of procedure LP1 at line 183 col 17 changed to HandleAck_
-\* Label End of procedure LP1 at line 195 col 9 changed to End_L
-\* Label GetCommitMessage of procedure FP2 at line 222 col 9 changed to GetCommitMessage_
-\* Label End of procedure FP2 at line 233 col 9 changed to End_F
-\* Label SendCommit of procedure LP2 at line 260 col 9 changed to SendCommit_
-\* Label End of procedure LP2 at line 265 col 9 changed to End_LP
-\* Label End of procedure LeaderCommit at line 342 col 9 changed to End_Le
-\* Label End of procedure LeaderSetupNewFollower at line 363 col 9 changed to End_Lea
-\* Label GetCandidate of process follower at line 398 col 9 changed to GetCandidate_
-\* Process variable candidate of process follower at line 389 col 11 changed to candidate_
-\* Procedure variable message of procedure FP1 at line 127 col 10 changed to message_
-\* Procedure variable confirmed of procedure LP1 at line 150 col 11 changed to confirmed_
+\* BEGIN TRANSLATION (chksum(pcal) = "1a01404" /\ chksum(tla) = "16a69018")
+\* Label GetMessage of procedure FP1 at line 135 col 9 changed to GetMessage_
+\* Label HandleMessage of procedure FP1 at line 138 col 9 changed to HandleMessage_
+\* Label End of procedure FP1 at line 148 col 9 changed to End_
+\* Label GetAck of procedure LP1 at line 183 col 17 changed to GetAck_
+\* Label HandleAck of procedure LP1 at line 186 col 17 changed to HandleAck_
+\* Label End of procedure LP1 at line 198 col 9 changed to End_L
+\* Label GetCommitMessage of procedure FP2 at line 225 col 9 changed to GetCommitMessage_
+\* Label End of procedure FP2 at line 236 col 9 changed to End_F
+\* Label SendCommit of procedure LP2 at line 263 col 9 changed to SendCommit_
+\* Label End of procedure LP2 at line 268 col 9 changed to End_LP
+\* Label End of procedure LeaderCommit at line 345 col 9 changed to End_Le
+\* Label End of procedure LeaderSetupNewFollower at line 366 col 9 changed to End_Lea
+\* Label GetCandidate of process follower at line 401 col 9 changed to GetCandidate_
+\* Process variable candidate of process follower at line 392 col 11 changed to candidate_
+\* Procedure variable message of procedure FP1 at line 130 col 10 changed to message_
+\* Procedure variable confirmed of procedure LP1 at line 153 col 11 changed to confirmed_
 CONSTANT defaultInitValue
 VARIABLES messages, pc, stack
 
@@ -497,7 +500,7 @@ ZxidGreaterThan(left, right) == \/ left.epoch > right.epoch
 Transaction(value, zxid) == [value |-> value, zxid |-> zxid]
 
 
-Epochs == 1..MAX_EPOCHS
+Epochs == 0..MAX_EPOCHS
 Counters == 0..MAX_COUNTER
 Zxids == {Zxid(epoch, counter) : epoch \in Epochs, counter \in Counters}
 Transactions == {Transaction(value, zxid) : value \in Values, zxid \in Zxids}
@@ -565,6 +568,10 @@ Last(seq) == seq[Len(seq)]
 
 LeaderOracle(epoch) == CHOOSE s \in Servers : TRUE
 
+
+
+TypeOK == messages \in [Servers -> UNION {[1..m -> MessageType] : m \in 0..MAX_MESSAGES}]
+
 VARIABLES message_, confirmed_, message, i, confirmed, v, last_epoch,
           last_leader, history, zxid, candidate_, delivered, restart, ready,
           candidate, followers, selected_history, new_epoch, counter,
@@ -622,7 +629,7 @@ Notify(self) == /\ pc[self] = "Notify"
 GetMessage_(self) == /\ pc[self] = "GetMessage_"
                      /\ CanRecv(self, messages)
                      /\ Assert(CanRecv(self, messages),
-                               "Failure of assertion at line 120, column 5 of macro called at line 133, column 9.")
+                               "Failure of assertion at line 123, column 5 of macro called at line 136, column 9.")
                      /\ /\ message_' = [message_ EXCEPT ![self] = Recv(self, messages)[1]]
                         /\ messages' = Recv(self, messages)[2]
                      /\ pc' = [pc EXCEPT ![self] = "HandleMessage_"]
@@ -669,7 +676,7 @@ GatherQuorum(self) == /\ pc[self] = "GatherQuorum"
                             THEN /\ pc' = [pc EXCEPT ![self] = "GetMessage"]
                                  /\ i' = i
                             ELSE /\ Assert(IsQuorum(followers[self], Servers),
-                                           "Failure of assertion at line 170, column 9.")
+                                           "Failure of assertion at line 173, column 9.")
                                  /\ i' = [i EXCEPT ![self] = 1]
                                  /\ pc' = [pc EXCEPT ![self] = "NewEpoch"]
                       /\ UNCHANGED << messages, stack, message_, confirmed_,
@@ -682,7 +689,7 @@ GatherQuorum(self) == /\ pc[self] = "GatherQuorum"
 GetMessage(self) == /\ pc[self] = "GetMessage"
                     /\ CanRecv(self, messages)
                     /\ Assert(CanRecv(self, messages),
-                              "Failure of assertion at line 120, column 5 of macro called at line 158, column 17.")
+                              "Failure of assertion at line 123, column 5 of macro called at line 161, column 17.")
                     /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
                        /\ messages' = Recv(self, messages)[2]
                     /\ pc' = [pc EXCEPT ![self] = "HandleMessage"]
@@ -739,7 +746,7 @@ HistorySelection(self) == /\ pc[self] = "HistorySelection"
 GetAck_(self) == /\ pc[self] = "GetAck_"
                  /\ CanRecv(self, messages)
                  /\ Assert(CanRecv(self, messages),
-                           "Failure of assertion at line 120, column 5 of macro called at line 181, column 17.")
+                           "Failure of assertion at line 123, column 5 of macro called at line 184, column 17.")
                  /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
                     /\ messages' = Recv(self, messages)[2]
                  /\ pc' = [pc EXCEPT ![self] = "HandleAck_"]
@@ -787,7 +794,7 @@ LP1(self) == GatherQuorum(self) \/ GetMessage(self) \/ HandleMessage(self)
 GetNewLeaderMessage(self) == /\ pc[self] = "GetNewLeaderMessage"
                              /\ CanRecv(self, messages)
                              /\ Assert(CanRecv(self, messages),
-                                       "Failure of assertion at line 120, column 5 of macro called at line 203, column 9.")
+                                       "Failure of assertion at line 123, column 5 of macro called at line 206, column 9.")
                              /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
                                 /\ messages' = Recv(self, messages)[2]
                              /\ pc' = [pc EXCEPT ![self] = "HandleNewLeaderMessage"]
@@ -827,7 +834,7 @@ HandleNewLeaderMessage(self) == /\ pc[self] = "HandleNewLeaderMessage"
 GetCommitMessage_(self) == /\ pc[self] = "GetCommitMessage_"
                            /\ CanRecv(self, messages)
                            /\ Assert(CanRecv(self, messages),
-                                     "Failure of assertion at line 120, column 5 of macro called at line 223, column 9.")
+                                     "Failure of assertion at line 123, column 5 of macro called at line 226, column 9.")
                            /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
                               /\ messages' = Recv(self, messages)[2]
                            /\ pc' = [pc EXCEPT ![self] = "HandleCommitMessage"]
@@ -869,7 +876,7 @@ FP2(self) == GetNewLeaderMessage(self) \/ HandleNewLeaderMessage(self)
 
 LP2Start(self) == /\ pc[self] = "LP2Start"
                   /\ Assert(IsQuorum(followers[self], Servers),
-                            "Failure of assertion at line 241, column 9.")
+                            "Failure of assertion at line 244, column 9.")
                   /\ i' = [i EXCEPT ![self] = 1]
                   /\ pc' = [pc EXCEPT ![self] = "NewLeader"]
                   /\ UNCHANGED << messages, stack, message_, confirmed_,
@@ -909,7 +916,7 @@ AwaitCommit(self) == /\ pc[self] = "AwaitCommit"
 GetAck(self) == /\ pc[self] = "GetAck"
                 /\ CanRecv(self, messages)
                 /\ Assert(CanRecv(self, messages),
-                          "Failure of assertion at line 120, column 5 of macro called at line 252, column 17.")
+                          "Failure of assertion at line 123, column 5 of macro called at line 255, column 17.")
                 /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
                    /\ messages' = Recv(self, messages)[2]
                 /\ pc' = [pc EXCEPT ![self] = "HandleAck"]
@@ -965,7 +972,7 @@ GetProposalMessage(self) == /\ pc[self] = "GetProposalMessage"
                                /\ Head(messages[self]).type = PROPOSE
                                /\ Head(messages[self]).from = candidate[self]
                             /\ Assert(CanRecv(self, messages),
-                                      "Failure of assertion at line 120, column 5 of macro called at line 275, column 9.")
+                                      "Failure of assertion at line 123, column 5 of macro called at line 278, column 9.")
                             /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
                                /\ messages' = Recv(self, messages)[2]
                             /\ pc' = [pc EXCEPT ![self] = "HandleProposal"]
@@ -997,7 +1004,7 @@ GetCommitMessage(self) == /\ pc[self] = "GetCommitMessage"
                              /\ Head(messages[self]).type = COMMIT
                              /\ Head(messages[self]).from = candidate[self]
                           /\ Assert(CanRecv(self, messages),
-                                    "Failure of assertion at line 120, column 5 of macro called at line 292, column 9.")
+                                    "Failure of assertion at line 123, column 5 of macro called at line 295, column 9.")
                           /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
                              /\ messages' = Recv(self, messages)[2]
                           /\ pc' = [pc EXCEPT ![self] = "HandleCommit"]
@@ -1028,7 +1035,7 @@ FollowerBroadcastCommit(self) == GetCommitMessage(self)
 
 LeaderProposeStart(self) == /\ pc[self] = "LeaderProposeStart"
                             /\ Assert(IsQuorum(followers[self], Servers),
-                                      "Failure of assertion at line 308, column 9.")
+                                      "Failure of assertion at line 311, column 9.")
                             /\ i' = [i EXCEPT ![self] = 1]
                             /\ pc' = [pc EXCEPT ![self] = "SendProposal"]
                             /\ UNCHANGED << messages, stack, message_,
@@ -1064,7 +1071,7 @@ GetProposeAckMessage(self) == /\ pc[self] = "GetProposeAckMessage"
                               /\ /\ CanRecv(self, messages)
                                  /\ Head(messages[self]).type = ACK_P
                               /\ Assert(CanRecv(self, messages),
-                                        "Failure of assertion at line 120, column 5 of macro called at line 326, column 9.")
+                                        "Failure of assertion at line 123, column 5 of macro called at line 329, column 9.")
                               /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
                                  /\ messages' = Recv(self, messages)[2]
                               /\ pc' = [pc EXCEPT ![self] = "HandleProposalAck"]
@@ -1132,7 +1139,7 @@ GetCepochMessage(self) == /\ pc[self] = "GetCepochMessage"
                           /\ /\ CanRecv(self, messages)
                              /\ Head(messages[self]).type = CEPOCH
                           /\ Assert(CanRecv(self, messages),
-                                    "Failure of assertion at line 120, column 5 of macro called at line 350, column 9.")
+                                    "Failure of assertion at line 123, column 5 of macro called at line 353, column 9.")
                           /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
                              /\ messages' = Recv(self, messages)[2]
                           /\ pc' = [pc EXCEPT ![self] = "HandleCepochMessage"]
@@ -1196,7 +1203,7 @@ GetAckNewLeaderMessage(self) == /\ pc[self] = "GetAckNewLeaderMessage"
                                 /\ /\ CanRecv(self, messages)
                                    /\ Head(messages[self]).type = ACK_LD
                                 /\ Assert(CanRecv(self, messages),
-                                          "Failure of assertion at line 120, column 5 of macro called at line 371, column 9.")
+                                          "Failure of assertion at line 123, column 5 of macro called at line 374, column 9.")
                                 /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
                                    /\ messages' = Recv(self, messages)[2]
                                 /\ pc' = [pc EXCEPT ![self] = "HandleAckLeader"]
