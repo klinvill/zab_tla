@@ -6,6 +6,9 @@ EXTENDS Sequences, Integers, TLC, FiniteSets
 \* Set of server IDs
 CONSTANTS Servers
 
+\* Differentiates between leader and follower processes
+CONSTANTS Leader, Follower
+
 \* Message types, correspond to those in the "Dissecting Zab" tech report
 CONSTANTS CEPOCH, NEWEPOCH, ACK_E,
           NEWLEADER, ACK_LD, COMMIT_LD,
@@ -365,7 +368,7 @@ begin
 end procedure;
 
 \* Models follower thread for each process
-process follower_tuple \in Servers \X {0}
+process follower_tuple \in Servers \X {Follower}
 variables last_epoch = 0,       \* Last new epoch proposol acknowledged
           last_leader = 0,      \* Last new leader proposal acknowledged
           history = <<>>,              \* In-order record of all the accepted value proposals
@@ -412,7 +415,7 @@ begin
 end process;
 
 \* Models leader thread for each process
-process leader_tuple \in Servers \X {1}
+process leader_tuple \in Servers \X {Leader}
 variables leader_candidate,            \* Candidate selected by leader oracle
           \* TODO: we use a sequence since we need to be able to run the macro DoSend() for each element in it, and I don't know how to do that using sets
           followers = <<>>,     \* tracks the followers committed to a leader
@@ -452,7 +455,7 @@ begin
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "2e3fcefa" /\ chksum(tla) = "d5f9de7d")
+\* BEGIN TRANSLATION (chksum(pcal) = "4fba0b9" /\ chksum(tla) = "b3a59956")
 \* Label End of procedure FP1 at line 149 col 9 changed to End_
 \* Label GetCepochMessage of procedure LP1 at line 161 col 17 changed to GetCepochMessage_
 \* Label HandleCepochMessage of procedure LP1 at line 166 col 17 changed to HandleCepochMessage_
@@ -563,7 +566,7 @@ vars == << messages, pc, stack, message_, confirmed_, message, i, confirmed,
            restart, ready, leader_candidate, followers, selected_history,
            new_epoch, counter, proposed, proposal_acks >>
 
-ProcSet == (Servers \X {0}) \cup (Servers \X {1})
+ProcSet == (Servers \X {Follower}) \cup (Servers \X {Leader})
 
 Init == (* Global variables *)
         /\ messages = [s \in Servers |-> <<>>]
@@ -578,25 +581,25 @@ Init == (* Global variables *)
         (* Procedure LeaderPropose *)
         /\ v = [ self \in ProcSet |-> defaultInitValue]
         (* Process follower_tuple *)
-        /\ last_epoch = [self \in Servers \X {0} |-> 0]
-        /\ last_leader = [self \in Servers \X {0} |-> 0]
-        /\ history = [self \in Servers \X {0} |-> <<>>]
-        /\ zxid = [self \in Servers \X {0} |-> Zxid(0, 0)]
-        /\ candidate = [self \in Servers \X {0} |-> defaultInitValue]
-        /\ delivered = [self \in Servers \X {0} |-> {}]
-        /\ restart = [self \in Servers \X {0} |-> FALSE]
-        /\ ready = [self \in Servers \X {0} |-> FALSE]
+        /\ last_epoch = [self \in Servers \X {Follower} |-> 0]
+        /\ last_leader = [self \in Servers \X {Follower} |-> 0]
+        /\ history = [self \in Servers \X {Follower} |-> <<>>]
+        /\ zxid = [self \in Servers \X {Follower} |-> Zxid(0, 0)]
+        /\ candidate = [self \in Servers \X {Follower} |-> defaultInitValue]
+        /\ delivered = [self \in Servers \X {Follower} |-> {}]
+        /\ restart = [self \in Servers \X {Follower} |-> FALSE]
+        /\ ready = [self \in Servers \X {Follower} |-> FALSE]
         (* Process leader_tuple *)
-        /\ leader_candidate = [self \in Servers \X {1} |-> defaultInitValue]
-        /\ followers = [self \in Servers \X {1} |-> <<>>]
-        /\ selected_history = [self \in Servers \X {1} |-> [last_leader |-> 0, history |-> <<>>]]
-        /\ new_epoch = [self \in Servers \X {1} |-> 0]
-        /\ counter = [self \in Servers \X {1} |-> 0]
-        /\ proposed = [self \in Servers \X {1} |-> <<>>]
-        /\ proposal_acks = [self \in Servers \X {1} |-> [t \in Transactions, e \in Epochs |-> {}]]
+        /\ leader_candidate = [self \in Servers \X {Leader} |-> defaultInitValue]
+        /\ followers = [self \in Servers \X {Leader} |-> <<>>]
+        /\ selected_history = [self \in Servers \X {Leader} |-> [last_leader |-> 0, history |-> <<>>]]
+        /\ new_epoch = [self \in Servers \X {Leader} |-> 0]
+        /\ counter = [self \in Servers \X {Leader} |-> 0]
+        /\ proposed = [self \in Servers \X {Leader} |-> <<>>]
+        /\ proposal_acks = [self \in Servers \X {Leader} |-> [t \in Transactions, e \in Epochs |-> {}]]
         /\ stack = [self \in ProcSet |-> << >>]
-        /\ pc = [self \in ProcSet |-> CASE self \in Servers \X {0} -> "GetCandidate_"
-                                        [] self \in Servers \X {1} -> "GetCandidate"]
+        /\ pc = [self \in ProcSet |-> CASE self \in Servers \X {Follower} -> "GetCandidate_"
+                                        [] self \in Servers \X {Leader} -> "GetCandidate"]
 
 Notify(self) == /\ pc[self] = "Notify"
                 /\ messages' = Send(candidate[self], (CepochMessage(self[1], last_epoch[self])), messages)
@@ -1425,8 +1428,8 @@ Next == (\E self \in ProcSet:  \/ FP1(self) \/ LP1(self) \/ FP2(self)
                                \/ LeaderPropose(self) \/ LeaderCommit(self)
                                \/ LeaderSetupNewFollower(self)
                                \/ LeaderAddFollowerToQuorum(self))
-           \/ (\E self \in Servers \X {0}: follower_tuple(self))
-           \/ (\E self \in Servers \X {1}: leader_tuple(self))
+           \/ (\E self \in Servers \X {Follower}: follower_tuple(self))
+           \/ (\E self \in Servers \X {Leader}: leader_tuple(self))
            \/ Terminating
 
 Spec == Init /\ [][Next]_vars
