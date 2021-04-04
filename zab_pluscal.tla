@@ -48,7 +48,7 @@ define
     Counters == 0..MAX_COUNTER
     Zxids == {Zxid(epoch, counter) : epoch \in Epochs, counter \in Counters}
     Transactions == {Transaction(value, zxid) : value \in Values, zxid \in Zxids}
-    Histories == [1..MAX_HISTORY_LENGTH -> Transactions]
+    Histories == UNION {[1..i -> Transactions] : i \in 0..MAX_HISTORY_LENGTH}
     LeaderProcesses == {LeaderProc(s) : s \in Servers}
     FollowerProcesses == {FollowerProc(s) : s \in Servers}
     Processes == LeaderProcesses \union FollowerProcesses
@@ -483,7 +483,7 @@ begin
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "b583fa5f" /\ chksum(tla) = "f1496735")
+\* BEGIN TRANSLATION (chksum(pcal) = "dc6fdd1" /\ chksum(tla) = "6e6c285d")
 \* Label End of procedure FP1 at line 175 col 9 changed to End_
 \* Label GetCepochMessage of procedure LP1 at line 188 col 17 changed to GetCepochMessage_
 \* Label HandleCepochMessage of procedure LP1 at line 193 col 17 changed to HandleCepochMessage_
@@ -520,7 +520,7 @@ Epochs == 0..MAX_EPOCHS
 Counters == 0..MAX_COUNTER
 Zxids == {Zxid(epoch, counter) : epoch \in Epochs, counter \in Counters}
 Transactions == {Transaction(value, zxid) : value \in Values, zxid \in Zxids}
-Histories == [1..MAX_HISTORY_LENGTH -> Transactions]
+Histories == UNION {[1..i -> Transactions] : i \in 0..MAX_HISTORY_LENGTH}
 LeaderProcesses == {LeaderProc(s) : s \in Servers}
 FollowerProcesses == {FollowerProc(s) : s \in Servers}
 Processes == LeaderProcesses \union FollowerProcesses
