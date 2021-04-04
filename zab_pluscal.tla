@@ -161,7 +161,7 @@ begin
     Notify:
         DoSend(LeaderProc(candidate), CepochMessage(self, last_epoch));
     GetAckEpochMessage:
-        await CanRecv(self, messages) /\ Head(messages[self]).type = NEWEPOCH /\ Head(messages[self]).from = candidate;
+        await CanRecv(self, messages) /\ Head(messages[self]).type = NEWEPOCH /\ Head(messages[self]).from = LeaderProc(candidate);
         DoRecv();
     HandleAckEpochMessage:
         if last_epoch < message.epoch then
@@ -287,7 +287,7 @@ begin
     GetProposalMessage:
         await   /\ CanRecv(self, messages)
                 /\ Head(messages[self]).type = PROPOSE
-                /\ Head(messages[self]).from = candidate;
+                /\ Head(messages[self]).from = LeaderProc(candidate);
         DoRecv();
 
     HandleProposal:
@@ -304,7 +304,7 @@ begin
     GetCommitMessage:
         await   /\ CanRecv(self, messages)
                 /\ Head(messages[self]).type = COMMIT
-                /\ Head(messages[self]).from = candidate;
+                /\ Head(messages[self]).from = LeaderProc(candidate);
         DoRecv();
 
     HandleCommit:
@@ -483,7 +483,7 @@ begin
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "b38df3f" /\ chksum(tla) = "78023b25")
+\* BEGIN TRANSLATION (chksum(pcal) = "b583fa5f" /\ chksum(tla) = "f1496735")
 \* Label End of procedure FP1 at line 175 col 9 changed to End_
 \* Label GetCepochMessage of procedure LP1 at line 188 col 17 changed to GetCepochMessage_
 \* Label HandleCepochMessage of procedure LP1 at line 193 col 17 changed to HandleCepochMessage_
@@ -667,7 +667,7 @@ Notify(self) == /\ pc[self] = "Notify"
                                 counter, proposed, proposal_acks >>
 
 GetAckEpochMessage(self) == /\ pc[self] = "GetAckEpochMessage"
-                            /\ CanRecv(self, messages) /\ Head(messages[self]).type = NEWEPOCH /\ Head(messages[self]).from = candidate[self]
+                            /\ CanRecv(self, messages) /\ Head(messages[self]).type = NEWEPOCH /\ Head(messages[self]).from = LeaderProc(candidate[self])
                             /\ Assert(CanRecv(self, messages),
                                       "Failure of assertion at line 152, column 5 of macro called at line 165, column 9.")
                             /\ /\ message_' = [message_ EXCEPT ![self] = Recv(self, messages)[1]]
@@ -1010,7 +1010,7 @@ LP2(self) == LP2Start(self) \/ NewLeader(self) \/ AwaitCommit(self)
 GetProposalMessage(self) == /\ pc[self] = "GetProposalMessage"
                             /\ /\ CanRecv(self, messages)
                                /\ Head(messages[self]).type = PROPOSE
-                               /\ Head(messages[self]).from = candidate[self]
+                               /\ Head(messages[self]).from = LeaderProc(candidate[self])
                             /\ Assert(CanRecv(self, messages),
                                       "Failure of assertion at line 152, column 5 of macro called at line 291, column 9.")
                             /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
@@ -1044,7 +1044,7 @@ FollowerBroadcastAccept(self) == GetProposalMessage(self)
 GetCommitMessage(self) == /\ pc[self] = "GetCommitMessage"
                           /\ /\ CanRecv(self, messages)
                              /\ Head(messages[self]).type = COMMIT
-                             /\ Head(messages[self]).from = candidate[self]
+                             /\ Head(messages[self]).from = LeaderProc(candidate[self])
                           /\ Assert(CanRecv(self, messages),
                                     "Failure of assertion at line 152, column 5 of macro called at line 308, column 9.")
                           /\ /\ message' = [message EXCEPT ![self] = Recv(self, messages)[1]]
