@@ -222,7 +222,7 @@ begin
                 \* TODO: under what conditions should we not check for the next message, e.g. restart leader election?
                 \* latest epoch seen by followers in quorum
                 latest_epoch := Max(latest_epoch, message.last_epoch);
-                if message.from \notin Range(followers) then
+                if message.from.server \notin Range(followers) then
                     followers := Append(followers, message.from.server);
                 end if;
         end while;
@@ -243,7 +243,7 @@ begin
                     DoRecvMessage(m);
                 end with;
             HandleAckE:
-                confirmed := confirmed \union {message.from};
+                confirmed := confirmed \union {message.from.server};
 
                 if  \/ message.last_leader > selected_history.last_leader
                     \/  /\ message.last_leader = selected_history.last_leader
@@ -308,7 +308,7 @@ begin
                     DoRecvMessage(m);
                 end with;
             HandleAckLD:
-                confirmed := confirmed \union {message.from};
+                confirmed := confirmed \union {message.from.server};
         end while;
         i := 1;
     SendCommitLeader:
@@ -381,7 +381,7 @@ begin
             DoRecvMessage(m);
         end with;
     HandleProposalAck:
-        proposal_acks[message.transaction, message.epoch] := proposal_acks[message.transaction, message.epoch] \union {message.from};
+        proposal_acks[message.transaction, message.epoch] := proposal_acks[message.transaction, message.epoch] \union {message.from.server};
     CheckQuorumAckd:
         \* TODO: should probably only send commit message once
         if IsQuorum(proposal_acks[message.transaction, message.epoch], Servers) then
@@ -525,7 +525,7 @@ begin
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "3c2794c9" /\ chksum(tla) = "e4b5620")
+\* BEGIN TRANSLATION (chksum(pcal) = "1d95b749" /\ chksum(tla) = "8527e508")
 \* Label GetCandidate of process follower at line 456 col 9 changed to GetCandidate_
 \* Procedure variable message of procedure FP1 at line 186 col 10 changed to message_
 \* Procedure variable confirmed of procedure LP1 at line 209 col 11 changed to confirmed_
@@ -793,7 +793,7 @@ GetCepochMessage(self) == /\ pc[self] = "GetCepochMessage"
 
 HandleCepochMessage(self) == /\ pc[self] = "HandleCepochMessage"
                              /\ latest_epoch' = [latest_epoch EXCEPT ![self] = Max(latest_epoch[self], message[self].last_epoch)]
-                             /\ IF message[self].from \notin Range(followers[self])
+                             /\ IF message[self].from.server \notin Range(followers[self])
                                    THEN /\ followers' = [followers EXCEPT ![self] = Append(followers[self], message[self].from.server)]
                                    ELSE /\ TRUE
                                         /\ UNCHANGED followers
@@ -852,7 +852,7 @@ GetAckE(self) == /\ pc[self] = "GetAckE"
                                  proposed, proposal_acks >>
 
 HandleAckE(self) == /\ pc[self] = "HandleAckE"
-                    /\ confirmed_' = [confirmed_ EXCEPT ![self] = confirmed_[self] \union {message[self].from}]
+                    /\ confirmed_' = [confirmed_ EXCEPT ![self] = confirmed_[self] \union {message[self].from.server}]
                     /\ IF \/ message[self].last_leader > selected_history[self].last_leader
                           \/  /\ message[self].last_leader = selected_history[self].last_leader
                               /\ ZxidGreaterThan(LastOrDefault(message[self].history, [zxid |-> Zxid(0,0)]).zxid, LastOrDefault(selected_history[self].history, [zxid |-> Zxid(0,0)]).zxid)
@@ -1031,7 +1031,7 @@ GetAckLD(self) == /\ pc[self] = "GetAckLD"
                                   proposed, proposal_acks >>
 
 HandleAckLD(self) == /\ pc[self] = "HandleAckLD"
-                     /\ confirmed' = [confirmed EXCEPT ![self] = confirmed[self] \union {message[self].from}]
+                     /\ confirmed' = [confirmed EXCEPT ![self] = confirmed[self] \union {message[self].from.server}]
                      /\ pc' = [pc EXCEPT ![self] = "AwaitCommit"]
                      /\ UNCHANGED << messages, stack, message_, confirmed_,
                                      message, latest_epoch, i, v, last_epoch,
@@ -1198,7 +1198,7 @@ GetProposeAckMessage(self) == /\ pc[self] = "GetProposeAckMessage"
                                               proposal_acks >>
 
 HandleProposalAck(self) == /\ pc[self] = "HandleProposalAck"
-                           /\ proposal_acks' = [proposal_acks EXCEPT ![self][message[self].transaction, message[self].epoch] = proposal_acks[self][message[self].transaction, message[self].epoch] \union {message[self].from}]
+                           /\ proposal_acks' = [proposal_acks EXCEPT ![self][message[self].transaction, message[self].epoch] = proposal_acks[self][message[self].transaction, message[self].epoch] \union {message[self].from.server}]
                            /\ pc' = [pc EXCEPT ![self] = "CheckQuorumAckd"]
                            /\ UNCHANGED << messages, stack, message_,
                                            confirmed_, message, latest_epoch,
