@@ -1432,4 +1432,13 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 \* END TRANSLATION
 
+
+
+
+\* Type checker constraints
+MessageLenConstraint == \A proc \in DOMAIN messages: \A sender \in DOMAIN messages[proc] : Len(messages[proc][sender]) <= MAX_MESSAGES
+EpochConstraint == \A proc \in DOMAIN new_epoch : new_epoch[proc] <= MAX_EPOCHS
+CounterConstraint == \A proc \in DOMAIN counter : counter[proc] <= MAX_COUNTER
+
+
 ====
