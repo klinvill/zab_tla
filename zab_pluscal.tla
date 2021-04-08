@@ -268,7 +268,7 @@ begin
         if last_epoch = message.epoch then
             last_leader := message.epoch;
             \* TODO: do we need to separately accept each value, zxid pair? Or can we just set the history
-            history := message.inital_history;
+            history := message.initial_history;
             DoSend(LeaderProc(candidate), AckLeaderMessage(self, message.epoch))
         else
             \* should start the protocol over again if the last acknowledged epoch proposal is different than the specified epoch
@@ -297,7 +297,7 @@ begin
         i := 1;
     NewLeader:
         while i <= Len(followers) do
-            DoSend(FollowerProc(followers[i]), NewLeaderMessage(self, new_epoch, selected_history));
+            DoSend(FollowerProc(followers[i]), NewLeaderMessage(self, new_epoch, selected_history.history));
             i := i+1;
         end while;
     AwaitCommit:
@@ -406,7 +406,7 @@ begin
             DoRecvMessage(m);
         end with;
     HandleNewCepochMessage:
-        if message.epoch < new_epoch then
+        if message.last_epoch < new_epoch then
             SendNewEpoch:
                 DoSend(message.from, NewEpochMessage(self, new_epoch));
             SendNewLeader:
@@ -525,7 +525,7 @@ begin
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "1d95b749" /\ chksum(tla) = "8527e508")
+\* BEGIN TRANSLATION (chksum(pcal) = "e9c4c6a1" /\ chksum(tla) = "a289bfa5")
 \* Label GetCandidate of process follower at line 456 col 9 changed to GetCandidate_
 \* Procedure variable message of procedure FP1 at line 186 col 10 changed to message_
 \* Procedure variable confirmed of procedure LP1 at line 209 col 11 changed to confirmed_
@@ -907,7 +907,7 @@ GetNewLeaderMessage(self) == /\ pc[self] = "GetNewLeaderMessage"
 HandleNewLeaderMessage(self) == /\ pc[self] = "HandleNewLeaderMessage"
                                 /\ IF last_epoch[self] = message[self].epoch
                                       THEN /\ last_leader' = [last_leader EXCEPT ![self] = message[self].epoch]
-                                           /\ history' = [history EXCEPT ![self] = message[self].inital_history]
+                                           /\ history' = [history EXCEPT ![self] = message[self].initial_history]
                                            /\ messages' = Send((LeaderProc(candidate[self])), (AckLeaderMessage(self, message[self].epoch)), messages)
                                            /\ pc' = [pc EXCEPT ![self] = "GetCommitLDMessage"]
                                            /\ UNCHANGED restart
@@ -987,7 +987,7 @@ LP2Start(self) == /\ pc[self] = "LP2Start"
 
 NewLeader(self) == /\ pc[self] = "NewLeader"
                    /\ IF i[self] <= Len(followers[self])
-                         THEN /\ messages' = Send((FollowerProc(followers[self][i[self]])), (NewLeaderMessage(self, new_epoch[self], selected_history[self])), messages)
+                         THEN /\ messages' = Send((FollowerProc(followers[self][i[self]])), (NewLeaderMessage(self, new_epoch[self], selected_history[self].history)), messages)
                               /\ i' = [i EXCEPT ![self] = i[self]+1]
                               /\ pc' = [pc EXCEPT ![self] = "NewLeader"]
                          ELSE /\ pc' = [pc EXCEPT ![self] = "AwaitCommit"]
@@ -1273,7 +1273,7 @@ GetNewCepochMessage(self) == /\ pc[self] = "GetNewCepochMessage"
                                              proposal_acks >>
 
 HandleNewCepochMessage(self) == /\ pc[self] = "HandleNewCepochMessage"
-                                /\ IF message[self].epoch < new_epoch[self]
+                                /\ IF message[self].last_epoch < new_epoch[self]
                                       THEN /\ pc' = [pc EXCEPT ![self] = "SendNewEpoch"]
                                       ELSE /\ TRUE
                                            /\ pc' = [pc EXCEPT ![self] = "End_LeaderSetupNewFollower"]
