@@ -280,7 +280,7 @@ begin
         end with;
 
         \* TODO: should delivered be a tuple since the transactions in a history should be delivered in-order?
-        delivered := delivered \union {history};
+        delivered := delivered \union Range(history);
     End_FP2:
         return;
 end procedure;
@@ -518,7 +518,7 @@ begin
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "1efaae7e" /\ chksum(tla) = "f68060dd")
+\* BEGIN TRANSLATION (chksum(pcal) = "e5626ce" /\ chksum(tla) = "565fbfd")
 \* Procedure variable message of procedure FP1 at line 185 col 10 changed to message_
 \* Procedure variable confirmed of procedure LP1 at line 208 col 11 changed to confirmed_
 CONSTANT defaultInitValue
@@ -885,7 +885,7 @@ GetCommitLDMessage(self) == /\ pc[self] = "GetCommitLDMessage"
                                     /\ messages' = Recv(self, m.from, messages)[2]
                                  /\ Assert(message'[self] = m,
                                            "Failure of assertion at line 173, column 5 of macro called at line 279, column 13.")
-                            /\ delivered' = [delivered EXCEPT ![self] = delivered[self] \union {history[self]}]
+                            /\ delivered' = [delivered EXCEPT ![self] = delivered[self] \union Range(history[self])]
                             /\ pc' = [pc EXCEPT ![self] = "End_FP2"]
                             /\ UNCHANGED << stack, message_, confirmed_,
                                             latest_epoch, i, confirmed, v,
