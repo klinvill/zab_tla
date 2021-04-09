@@ -385,7 +385,7 @@ begin
             SendCommit:
                 \* Send to all followers, not just those that have ackd
                 while i <= Len(followers) do
-                    DoSend(FollowerProc(followers[i]), ProposalMessage(self, new_epoch, Transaction(v, Zxid(new_epoch, counter))));
+                    DoSend(FollowerProc(followers[i]), CommitProposalMessage(self, new_epoch, message.transaction));
                     i := i+1;
                 end while;
         end if;
@@ -518,7 +518,7 @@ begin
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "4d41f491" /\ chksum(tla) = "ebe56cf1")
+\* BEGIN TRANSLATION (chksum(pcal) = "653aebba" /\ chksum(tla) = "b4513b2f")
 \* Procedure variable message of procedure FP1 at line 185 col 10 changed to message_
 \* Procedure variable confirmed of procedure LP1 at line 208 col 11 changed to confirmed_
 CONSTANT defaultInitValue
@@ -1110,7 +1110,7 @@ GetProposeAckMessage(self) == /\ pc[self] = "GetProposeAckMessage"
 
 SendCommit(self) == /\ pc[self] = "SendCommit"
                     /\ IF i[self] <= Len(followers[self])
-                          THEN /\ messages' = Send((FollowerProc(followers[self][i[self]])), (ProposalMessage(self, new_epoch[self], Transaction(v[self], Zxid(new_epoch[self], counter[self])))), messages)
+                          THEN /\ messages' = Send((FollowerProc(followers[self][i[self]])), (CommitProposalMessage(self, new_epoch[self], message[self].transaction)), messages)
                                /\ i' = [i EXCEPT ![self] = i[self]+1]
                                /\ pc' = [pc EXCEPT ![self] = "SendCommit"]
                           ELSE /\ pc' = [pc EXCEPT ![self] = "End_LeaderCommit"]
