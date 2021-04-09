@@ -344,7 +344,7 @@ begin
 
         \* TODO: if all previous transactions have not been delivered yet, should we discard the COMMIT message or try to save it for later?
         \* Only deliver if all previous transactions in the history have been delivered as per zxid
-        if \A trans \in history : ZxidGreaterThan(message.transaction.zxid, trans.zxid) => trans \in delivered then
+        if \A trans \in Range(history) : ZxidGreaterThan(message.transaction.zxid, trans.zxid) => trans \in delivered then
             delivered := delivered \union {message.transaction};
         end if;
 
@@ -518,7 +518,7 @@ begin
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "653aebba" /\ chksum(tla) = "b4513b2f")
+\* BEGIN TRANSLATION (chksum(pcal) = "1efaae7e" /\ chksum(tla) = "f68060dd")
 \* Procedure variable message of procedure FP1 at line 185 col 10 changed to message_
 \* Procedure variable confirmed of procedure LP1 at line 208 col 11 changed to confirmed_
 CONSTANT defaultInitValue
@@ -1021,7 +1021,7 @@ GetCommitMessage(self) == /\ pc[self] = "GetCommitMessage"
                                   /\ messages' = Recv(self, m.from, messages)[2]
                                /\ Assert(message'[self] = m,
                                          "Failure of assertion at line 173, column 5 of macro called at line 342, column 13.")
-                          /\ IF \A trans \in history[self] : ZxidGreaterThan(message'[self].transaction.zxid, trans.zxid) => trans \in delivered[self]
+                          /\ IF \A trans \in Range(history[self]) : ZxidGreaterThan(message'[self].transaction.zxid, trans.zxid) => trans \in delivered[self]
                                 THEN /\ delivered' = [delivered EXCEPT ![self] = delivered[self] \union {message'[self].transaction}]
                                 ELSE /\ TRUE
                                      /\ UNCHANGED delivered
