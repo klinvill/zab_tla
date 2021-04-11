@@ -403,6 +403,18 @@ begin
     return;
 end procedure;
 
+procedure IgnoreAckEpoch()
+begin
+    DiscardAckEpochMessage:
+        await \E m \in ReceivableMessages(self, messages) : m.type = ACK_E;
+        with m \in {msg \in ReceivableMessages(self, messages) : msg.type = ACK_E} do
+            DoRecvMessage(m);
+        end with;
+
+    End_IgnoreAckEpoch:
+        return;
+end procedure;
+
 \* Models follower thread for each process
 process follower \in {FollowerProc(s) : s \in Servers}
 variables last_epoch = 0,       \* Last new epoch proposol acknowledged
@@ -481,13 +493,17 @@ begin
                     or
                         await \E m \in ReceivableMessages(self, messages) : m.type = ACK_LD;
                         call LeaderAddFollowerToQuorum();
+                    or
+                        \* TODO: the zab protocol doesn't state how ack epoch messages should be handled in this phase. Should they just be ignored?
+                        await \E m \in ReceivableMessages(self, messages) : m.type = ACK_E;
+                        call IgnoreAckEpoch();
                     end either
             end while;
         end if;
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "98e570f" /\ chksum(tla) = "30151ee9")
+\* BEGIN TRANSLATION (chksum(pcal) = "c0f48073" /\ chksum(tla) = "aaa62a75")
 \* Procedure variable message of procedure FP1 at line 178 col 10 changed to message_
 \* Procedure variable confirmed of procedure LP1 at line 201 col 11 changed to confirmed_
 CONSTANT defaultInitValue
@@ -1143,6 +1159,41 @@ HandleAckLeader(self) == /\ pc[self] = "HandleAckLeader"
 LeaderAddFollowerToQuorum(self) == GetAckNewLeaderMessage(self)
                                       \/ HandleAckLeader(self)
 
+DiscardAckEpochMessage(self) == /\ pc[self] = "DiscardAckEpochMessage"
+                                /\ \E m \in ReceivableMessages(self, messages) : m.type = ACK_E
+                                /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = ACK_E}:
+                                     /\ Assert(CanRecvFrom(self, m.from, messages),
+                                               "Failure of assertion at line 164, column 5 of macro called at line 411, column 13.")
+                                     /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
+                                        /\ messages' = Recv(self, m.from, messages)[2]
+                                     /\ Assert(message'[self] = m,
+                                               "Failure of assertion at line 166, column 5 of macro called at line 411, column 13.")
+                                /\ pc' = [pc EXCEPT ![self] = "End_IgnoreAckEpoch"]
+                                /\ UNCHANGED << stack, message_, confirmed_,
+                                                latest_epoch, confirmed, v,
+                                                last_epoch, last_leader,
+                                                history, candidate, delivered,
+                                                restart, ready,
+                                                leader_candidate, followers,
+                                                selected_history, new_epoch,
+                                                counter, proposed,
+                                                proposal_acks >>
+
+End_IgnoreAckEpoch(self) == /\ pc[self] = "End_IgnoreAckEpoch"
+                            /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
+                            /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
+                            /\ UNCHANGED << messages, message_, confirmed_,
+                                            message, latest_epoch, confirmed,
+                                            v, last_epoch, last_leader,
+                                            history, candidate, delivered,
+                                            restart, ready, leader_candidate,
+                                            followers, selected_history,
+                                            new_epoch, counter, proposed,
+                                            proposal_acks >>
+
+IgnoreAckEpoch(self) == DiscardAckEpochMessage(self)
+                           \/ End_IgnoreAckEpoch(self)
+
 FollowerDiscover(self) == /\ pc[self] = "FollowerDiscover"
                           /\ candidate' = [candidate EXCEPT ![self] = LeaderOracle(last_epoch[self] + 1)]
                           /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "FP1",
@@ -1303,6 +1354,12 @@ LeaderBroadcast(self) == /\ pc[self] = "LeaderBroadcast"
                                                                     \o stack[self]]
                                /\ pc' = [pc EXCEPT ![self] = "GetAckNewLeaderMessage"]
                                /\ v' = v
+                            \/ /\ \E m \in ReceivableMessages(self, messages) : m.type = ACK_E
+                               /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "IgnoreAckEpoch",
+                                                                        pc        |->  "LeaderBroadcast" ] >>
+                                                                    \o stack[self]]
+                               /\ pc' = [pc EXCEPT ![self] = "DiscardAckEpochMessage"]
+                               /\ v' = v
                          /\ UNCHANGED << messages, message_, confirmed_,
                                          message, latest_epoch, confirmed,
                                          last_epoch, last_leader, history,
@@ -1323,7 +1380,8 @@ Next == (\E self \in ProcSet:  \/ FP1(self) \/ LP1(self) \/ FP2(self)
                                \/ FollowerBroadcastCommit(self)
                                \/ LeaderPropose(self) \/ LeaderCommit(self)
                                \/ LeaderSetupNewFollower(self)
-                               \/ LeaderAddFollowerToQuorum(self))
+                               \/ LeaderAddFollowerToQuorum(self)
+                               \/ IgnoreAckEpoch(self))
            \/ (\E self \in {FollowerProc(s) : s \in Servers}: follower(self))
            \/ (\E self \in {LeaderProc(s) : s \in Servers}: leader(self))
            \/ Terminating
