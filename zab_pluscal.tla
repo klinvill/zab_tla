@@ -57,6 +57,15 @@ define
 
     Send(to, m, _messages) == [_messages EXCEPT ![to] = [_messages[to] EXCEPT ![m.from] = Append(_messages[to][m.from], m)]]
 
+    \* Returns an updated messages with a message sent to every process in the specified set
+    RECURSIVE SendToSet(_, _, _)
+    SendToSet(set, m, _messages) == IF Cardinality(set) = 0
+                                    THEN _messages
+                                    ELSE
+                                        LET to == CHOOSE to \in set : TRUE
+                                            others == set \ {to}
+                                        IN Send(to, m, SendToSet(others, m, _messages))
+
     \* returns a tuple of <<message, messages>> where messages is the updated messages structure without the received message
     Recv(proc, from, _messages) == <<Head(_messages[proc][from]), [_messages EXCEPT ![proc] = [_messages[proc] EXCEPT ![from] = Tail(_messages[proc][from])]]>>
 
@@ -126,33 +135,17 @@ define
     \* TODO: should we include a refinement that chooses the server with the latest zxid (as used in the zookeeper implemenation)?
     LeaderOracle(epoch) == CHOOSE s \in Servers : TRUE
 
-
-    \* Type invariant checks
-    \* TODO: ensure that the queue is a sequence
-    LeaderMessagesOK(proc, queue) == /\ proc \in LeaderProcesses
-                                     /\ \A from \in DOMAIN queue:
-                                        /\ from \in Processes
-                                        /\ \A m \in Range(queue[from]):
-                                            m \in FollowerMessageType
-
-    FollowerMessagesOK(proc, queue) == /\ proc \in FollowerProcesses
-                                       /\ \A from \in DOMAIN queue:
-                                            /\ from \in Processes
-                                            /\ \A m \in Range(queue[from]):
-                                                m \in LeaderMessageType
-
-    \* Leaders should only receive messages from followers, and vice versa
-    MessagesOK == \A proc \in DOMAIN messages:
-                    \/ proc.role = Leader /\ LeaderMessagesOK(proc, messages[proc])
-                    \/ proc.role = Follower /\ FollowerMessagesOK(proc, messages[proc])
-
-    TypeOK == /\ MessagesOK
 end define;
 
 \* Wraps the Send() operator to update the messages structure
 macro DoSend(to, m)
 begin
     messages := Send(to, m, messages);
+end macro;
+
+macro DoSendToSet(to_procs, m)
+begin
+    messages := SendToSet(to_procs, m, messages);
 end macro;
 
 \* Wraps the Recv() operator to set the message variable to the next message and update the messages structure
@@ -207,11 +200,10 @@ end procedure;
 procedure LP1()
 variables confirmed = {},
           message,
-          latest_epoch = 0,
-          i = 0;
+          latest_epoch = 0;
 begin
     GatherQuorum:
-        while ~IsQuorum(Range(followers), Servers) do
+        while ~IsQuorum(followers, Servers) do
             GetCepochMessage:
                 await \E m \in ReceivableMessages(self, messages) : m.type = CEPOCH;
                 with m \in {msg \in ReceivableMessages(self, messages) : msg.type = CEPOCH} do
@@ -221,21 +213,17 @@ begin
                 \* TODO: under what conditions should we not check for the next message, e.g. restart leader election?
                 \* latest epoch seen by followers in quorum
                 latest_epoch := Max(latest_epoch, message.last_epoch);
-                if message.from.server \notin Range(followers) then
-                    followers := Append(followers, message.from.server);
+                if message.from.server \notin followers then
+                    followers := followers \union {message.from.server};
                 end if;
         end while;
 
-        assert IsQuorum(Range(followers), Servers);
+        assert IsQuorum(followers, Servers);
         new_epoch := latest_epoch + 1;
-        i := 1;
     NewEpoch:
-        while i <= Len(followers) do
-            DoSend(FollowerProc(followers[i]), NewEpochMessage(self, new_epoch));
-            i := i+1;
-        end while;
+        DoSendToSet({FollowerProc(f) : f \in followers}, NewEpochMessage(self, new_epoch));
     HistorySelection:
-        while confirmed /= Range(followers) do
+        while confirmed /= followers do
                 await \E m \in ReceivableMessages(self, messages) : m.type = ACK_E;
                 with m \in {msg \in ReceivableMessages(self, messages) : msg.type = ACK_E} do
                     DoRecvMessage(m);
@@ -290,13 +278,8 @@ procedure LP2()
 variables confirmed = {};   \* followers that have ack'd the new leader message
 begin
     LP2Start:
-        assert IsQuorum(Range(followers), Servers);
-        i := 1;
-    NewLeader:
-        while i <= Len(followers) do
-            DoSend(FollowerProc(followers[i]), NewLeaderMessage(self, new_epoch, selected_history.history));
-            i := i+1;
-        end while;
+        assert IsQuorum(followers, Servers);
+        DoSendToSet({FollowerProc(f) : f \in followers}, NewLeaderMessage(self, new_epoch, selected_history.history));
     AwaitCommit:
         while ~IsQuorum(confirmed, Servers) do
                 await \E m \in ReceivableMessages(self, messages) : m.type = ACK_LD;
@@ -306,12 +289,8 @@ begin
 
                 confirmed := confirmed \union {message.from.server};
         end while;
-        i := 1;
     SendCommitLeader:
-        while i <= Len(followers) do
-            DoSend(FollowerProc(followers[i]), CommitLeaderMessage(self, new_epoch));
-            i := i+1;
-        end while;
+        DoSendToSet({FollowerProc(f) : f \in followers}, CommitLeaderMessage(self, new_epoch));
 
         return;
 end procedure;
@@ -355,14 +334,10 @@ end procedure;
 \* Leader Phase 3: Broadcast
 procedure LeaderPropose(v)
 begin
-    LeaderProposeStart:
-        assert IsQuorum(Range(followers), Servers);
-        i := 1;
     SendProposal:
-        while i <= Len(followers) do
-            DoSend(FollowerProc(followers[i]), ProposalMessage(self, new_epoch, Transaction(v, Zxid(new_epoch, counter))));
-            i := i+1;
-        end while;
+        assert IsQuorum(followers, Servers);
+
+        DoSendToSet({FollowerProc(f) : f \in followers}, ProposalMessage(self, new_epoch, Transaction(v, Zxid(new_epoch, counter))));
         proposed := Append(proposed, Transaction(v, Zxid(new_epoch, counter)));
         counter := counter + 1;
 
@@ -379,15 +354,11 @@ begin
 
         proposal_acks[message.transaction, message.epoch] := proposal_acks[message.transaction, message.epoch] \union {message.from.server};
 
+    SendCommit:
         \* TODO: should probably only send commit message once
         if IsQuorum(proposal_acks[message.transaction, message.epoch], Servers) then
-            i := 1;
-            SendCommit:
-                \* Send to all followers, not just those that have ackd
-                while i <= Len(followers) do
-                    DoSend(FollowerProc(followers[i]), CommitProposalMessage(self, new_epoch, message.transaction));
-                    i := i+1;
-                end while;
+            \* Send to all followers, not just those that have ackd
+            DoSendToSet({FollowerProc(f) : f \in followers}, CommitProposalMessage(self, new_epoch, message.transaction));
         end if;
 
     End_LeaderCommit:
@@ -426,8 +397,7 @@ begin
     HandleAckLeader:
         if message.epoch = new_epoch then
             DoSend(message.from, CommitLeaderMessage(self, new_epoch));
-            \* TODO: can we make followers a set?
-            followers := Append(followers, message.from.server);
+            followers := followers \union {message.from.server};
         end if;
 
     return;
@@ -480,8 +450,7 @@ end process;
 \* Models leader thread for each process
 process leader \in {LeaderProc(s) : s \in Servers}
 variables leader_candidate,            \* Candidate selected by leader oracle
-          \* TODO: we use a sequence since we need to be able to run the macro DoSend() for each element in it, and I don't know how to do that using sets
-          followers = <<>>,     \* tracks the followers committed to a leader
+          followers = {},     \* tracks the followers committed to a leader
           selected_history = [last_leader |-> 0, history |-> <<>>],     \* tracks the selected initial history
           new_epoch = 0,
           counter = 0,          \* Incremented for each proposal, used to generate monotonically increasing zxid
@@ -518,9 +487,9 @@ begin
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "e5626ce" /\ chksum(tla) = "565fbfd")
-\* Procedure variable message of procedure FP1 at line 185 col 10 changed to message_
-\* Procedure variable confirmed of procedure LP1 at line 208 col 11 changed to confirmed_
+\* BEGIN TRANSLATION (chksum(pcal) = "98e570f" /\ chksum(tla) = "30151ee9")
+\* Procedure variable message of procedure FP1 at line 178 col 10 changed to message_
+\* Procedure variable confirmed of procedure LP1 at line 201 col 11 changed to confirmed_
 CONSTANT defaultInitValue
 VARIABLES messages, pc, stack
 
@@ -550,6 +519,15 @@ Processes == LeaderProcesses \union FollowerProcesses
 
 
 Send(to, m, _messages) == [_messages EXCEPT ![to] = [_messages[to] EXCEPT ![m.from] = Append(_messages[to][m.from], m)]]
+
+
+RECURSIVE SendToSet(_, _, _)
+SendToSet(set, m, _messages) == IF Cardinality(set) = 0
+                                THEN _messages
+                                ELSE
+                                    LET to == CHOOSE to \in set : TRUE
+                                        others == set \ {to}
+                                    IN Send(to, m, SendToSet(others, m, _messages))
 
 
 Recv(proc, from, _messages) == <<Head(_messages[proc][from]), [_messages EXCEPT ![proc] = [_messages[proc] EXCEPT ![from] = Tail(_messages[proc][from])]]>>
@@ -620,35 +598,13 @@ LastOrDefault(seq, default) == IF Len(seq) = 0 THEN default ELSE seq[Len(seq)]
 
 LeaderOracle(epoch) == CHOOSE s \in Servers : TRUE
 
-
-
-
-LeaderMessagesOK(proc, queue) == /\ proc \in LeaderProcesses
-                                 /\ \A from \in DOMAIN queue:
-                                    /\ from \in Processes
-                                    /\ \A m \in Range(queue[from]):
-                                        m \in FollowerMessageType
-
-FollowerMessagesOK(proc, queue) == /\ proc \in FollowerProcesses
-                                   /\ \A from \in DOMAIN queue:
-                                        /\ from \in Processes
-                                        /\ \A m \in Range(queue[from]):
-                                            m \in LeaderMessageType
-
-
-MessagesOK == \A proc \in DOMAIN messages:
-                \/ proc.role = Leader /\ LeaderMessagesOK(proc, messages[proc])
-                \/ proc.role = Follower /\ FollowerMessagesOK(proc, messages[proc])
-
-TypeOK == /\ MessagesOK
-
-VARIABLES message_, confirmed_, message, latest_epoch, i, confirmed, v,
+VARIABLES message_, confirmed_, message, latest_epoch, confirmed, v,
           last_epoch, last_leader, history, candidate, delivered, restart,
           ready, leader_candidate, followers, selected_history, new_epoch,
           counter, proposed, proposal_acks
 
 vars == << messages, pc, stack, message_, confirmed_, message, latest_epoch,
-           i, confirmed, v, last_epoch, last_leader, history, candidate,
+           confirmed, v, last_epoch, last_leader, history, candidate,
            delivered, restart, ready, leader_candidate, followers,
            selected_history, new_epoch, counter, proposed, proposal_acks >>
 
@@ -662,7 +618,6 @@ Init == (* Global variables *)
         /\ confirmed_ = [ self \in ProcSet |-> {}]
         /\ message = [ self \in ProcSet |-> defaultInitValue]
         /\ latest_epoch = [ self \in ProcSet |-> 0]
-        /\ i = [ self \in ProcSet |-> 0]
         (* Procedure LP2 *)
         /\ confirmed = [ self \in ProcSet |-> {}]
         (* Procedure LeaderPropose *)
@@ -677,7 +632,7 @@ Init == (* Global variables *)
         /\ ready = [self \in {FollowerProc(s) : s \in Servers} |-> FALSE]
         (* Process leader *)
         /\ leader_candidate = [self \in {LeaderProc(s) : s \in Servers} |-> defaultInitValue]
-        /\ followers = [self \in {LeaderProc(s) : s \in Servers} |-> <<>>]
+        /\ followers = [self \in {LeaderProc(s) : s \in Servers} |-> {}]
         /\ selected_history = [self \in {LeaderProc(s) : s \in Servers} |-> [last_leader |-> 0, history |-> <<>>]]
         /\ new_epoch = [self \in {LeaderProc(s) : s \in Servers} |-> 0]
         /\ counter = [self \in {LeaderProc(s) : s \in Servers} |-> 0]
@@ -691,7 +646,7 @@ Notify(self) == /\ pc[self] = "Notify"
                 /\ messages' = Send((LeaderProc(candidate[self])), (CepochMessage(self, last_epoch[self])), messages)
                 /\ pc' = [pc EXCEPT ![self] = "GetAckEpochMessage"]
                 /\ UNCHANGED << stack, message_, confirmed_, message,
-                                latest_epoch, i, confirmed, v, last_epoch,
+                                latest_epoch, confirmed, v, last_epoch,
                                 last_leader, history, candidate, delivered,
                                 restart, ready, leader_candidate, followers,
                                 selected_history, new_epoch, counter, proposed,
@@ -701,14 +656,14 @@ GetAckEpochMessage(self) == /\ pc[self] = "GetAckEpochMessage"
                             /\ \E m \in ReceivableMessages(self, messages) : m.type = NEWEPOCH /\ m.from = LeaderProc(candidate[self])
                             /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = NEWEPOCH /\ msg.from = LeaderProc(candidate[self])}:
                                  /\ Assert(CanRecvFrom(self, m.from, messages),
-                                           "Failure of assertion at line 171, column 5 of macro called at line 192, column 13.")
+                                           "Failure of assertion at line 164, column 5 of macro called at line 185, column 13.")
                                  /\ /\ message_' = [message_ EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                     /\ messages' = Recv(self, m.from, messages)[2]
                                  /\ Assert(message_'[self] = m,
-                                           "Failure of assertion at line 173, column 5 of macro called at line 192, column 13.")
+                                           "Failure of assertion at line 166, column 5 of macro called at line 185, column 13.")
                             /\ pc' = [pc EXCEPT ![self] = "HandleAckEpochMessage"]
                             /\ UNCHANGED << stack, confirmed_, message,
-                                            latest_epoch, i, confirmed, v,
+                                            latest_epoch, confirmed, v,
                                             last_epoch, last_leader, history,
                                             candidate, delivered, restart,
                                             ready, leader_candidate, followers,
@@ -723,7 +678,7 @@ HandleAckEpochMessage(self) == /\ pc[self] = "HandleAckEpochMessage"
                                      ELSE /\ pc' = [pc EXCEPT ![self] = "GetAckEpochMessage"]
                                           /\ UNCHANGED << messages, last_epoch >>
                                /\ UNCHANGED << stack, message_, confirmed_,
-                                               message, latest_epoch, i,
+                                               message, latest_epoch,
                                                confirmed, v, last_leader,
                                                history, candidate, delivered,
                                                restart, ready,
@@ -737,7 +692,7 @@ End_FP1(self) == /\ pc[self] = "End_FP1"
                  /\ message_' = [message_ EXCEPT ![self] = Head(stack[self]).message_]
                  /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                  /\ UNCHANGED << messages, confirmed_, message, latest_epoch,
-                                 i, confirmed, v, last_epoch, last_leader,
+                                 confirmed, v, last_epoch, last_leader,
                                  history, candidate, delivered, restart, ready,
                                  leader_candidate, followers, selected_history,
                                  new_epoch, counter, proposed, proposal_acks >>
@@ -746,13 +701,12 @@ FP1(self) == Notify(self) \/ GetAckEpochMessage(self)
                 \/ HandleAckEpochMessage(self) \/ End_FP1(self)
 
 GatherQuorum(self) == /\ pc[self] = "GatherQuorum"
-                      /\ IF ~IsQuorum(Range(followers[self]), Servers)
+                      /\ IF ~IsQuorum(followers[self], Servers)
                             THEN /\ pc' = [pc EXCEPT ![self] = "GetCepochMessage"]
-                                 /\ UNCHANGED << i, new_epoch >>
-                            ELSE /\ Assert(IsQuorum(Range(followers[self]), Servers),
-                                           "Failure of assertion at line 229, column 9.")
+                                 /\ UNCHANGED new_epoch
+                            ELSE /\ Assert(IsQuorum(followers[self], Servers),
+                                           "Failure of assertion at line 221, column 9.")
                                  /\ new_epoch' = [new_epoch EXCEPT ![self] = latest_epoch[self] + 1]
-                                 /\ i' = [i EXCEPT ![self] = 1]
                                  /\ pc' = [pc EXCEPT ![self] = "NewEpoch"]
                       /\ UNCHANGED << messages, stack, message_, confirmed_,
                                       message, latest_epoch, confirmed, v,
@@ -766,18 +720,18 @@ GetCepochMessage(self) == /\ pc[self] = "GetCepochMessage"
                           /\ \E m \in ReceivableMessages(self, messages) : m.type = CEPOCH
                           /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = CEPOCH}:
                                /\ Assert(CanRecvFrom(self, m.from, messages),
-                                         "Failure of assertion at line 171, column 5 of macro called at line 218, column 21.")
+                                         "Failure of assertion at line 164, column 5 of macro called at line 210, column 21.")
                                /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                   /\ messages' = Recv(self, m.from, messages)[2]
                                /\ Assert(message'[self] = m,
-                                         "Failure of assertion at line 173, column 5 of macro called at line 218, column 21.")
+                                         "Failure of assertion at line 166, column 5 of macro called at line 210, column 21.")
                           /\ latest_epoch' = [latest_epoch EXCEPT ![self] = Max(latest_epoch[self], message'[self].last_epoch)]
-                          /\ IF message'[self].from.server \notin Range(followers[self])
-                                THEN /\ followers' = [followers EXCEPT ![self] = Append(followers[self], message'[self].from.server)]
+                          /\ IF message'[self].from.server \notin followers[self]
+                                THEN /\ followers' = [followers EXCEPT ![self] = followers[self] \union {message'[self].from.server}]
                                 ELSE /\ TRUE
                                      /\ UNCHANGED followers
                           /\ pc' = [pc EXCEPT ![self] = "GatherQuorum"]
-                          /\ UNCHANGED << stack, message_, confirmed_, i,
+                          /\ UNCHANGED << stack, message_, confirmed_,
                                           confirmed, v, last_epoch,
                                           last_leader, history, candidate,
                                           delivered, restart, ready,
@@ -786,12 +740,8 @@ GetCepochMessage(self) == /\ pc[self] = "GetCepochMessage"
                                           proposal_acks >>
 
 NewEpoch(self) == /\ pc[self] = "NewEpoch"
-                  /\ IF i[self] <= Len(followers[self])
-                        THEN /\ messages' = Send((FollowerProc(followers[self][i[self]])), (NewEpochMessage(self, new_epoch[self])), messages)
-                             /\ i' = [i EXCEPT ![self] = i[self]+1]
-                             /\ pc' = [pc EXCEPT ![self] = "NewEpoch"]
-                        ELSE /\ pc' = [pc EXCEPT ![self] = "HistorySelection"]
-                             /\ UNCHANGED << messages, i >>
+                  /\ messages' = SendToSet(({FollowerProc(f) : f \in followers[self]}), (NewEpochMessage(self, new_epoch[self])), messages)
+                  /\ pc' = [pc EXCEPT ![self] = "HistorySelection"]
                   /\ UNCHANGED << stack, message_, confirmed_, message,
                                   latest_epoch, confirmed, v, last_epoch,
                                   last_leader, history, candidate, delivered,
@@ -800,15 +750,15 @@ NewEpoch(self) == /\ pc[self] = "NewEpoch"
                                   proposed, proposal_acks >>
 
 HistorySelection(self) == /\ pc[self] = "HistorySelection"
-                          /\ IF confirmed_[self] /= Range(followers[self])
+                          /\ IF confirmed_[self] /= followers[self]
                                 THEN /\ \E m \in ReceivableMessages(self, messages) : m.type = ACK_E
                                      /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = ACK_E}:
                                           /\ Assert(CanRecvFrom(self, m.from, messages),
-                                                    "Failure of assertion at line 171, column 5 of macro called at line 241, column 21.")
+                                                    "Failure of assertion at line 164, column 5 of macro called at line 229, column 21.")
                                           /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                              /\ messages' = Recv(self, m.from, messages)[2]
                                           /\ Assert(message'[self] = m,
-                                                    "Failure of assertion at line 173, column 5 of macro called at line 241, column 21.")
+                                                    "Failure of assertion at line 166, column 5 of macro called at line 229, column 21.")
                                      /\ confirmed_' = [confirmed_ EXCEPT ![self] = confirmed_[self] \union {message'[self].from.server}]
                                      /\ IF \/ message'[self].last_leader > selected_history[self].last_leader
                                            \/  /\ message'[self].last_leader = selected_history[self].last_leader
@@ -817,12 +767,11 @@ HistorySelection(self) == /\ pc[self] = "HistorySelection"
                                            ELSE /\ TRUE
                                                 /\ UNCHANGED selected_history
                                      /\ pc' = [pc EXCEPT ![self] = "HistorySelection"]
-                                     /\ UNCHANGED << stack, latest_epoch, i >>
+                                     /\ UNCHANGED << stack, latest_epoch >>
                                 ELSE /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
                                      /\ confirmed_' = [confirmed_ EXCEPT ![self] = Head(stack[self]).confirmed_]
                                      /\ message' = [message EXCEPT ![self] = Head(stack[self]).message]
                                      /\ latest_epoch' = [latest_epoch EXCEPT ![self] = Head(stack[self]).latest_epoch]
-                                     /\ i' = [i EXCEPT ![self] = Head(stack[self]).i]
                                      /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                                      /\ UNCHANGED << messages,
                                                      selected_history >>
@@ -840,14 +789,14 @@ GetNewLeaderMessage(self) == /\ pc[self] = "GetNewLeaderMessage"
                              /\ \E m \in ReceivableMessages(self, messages) : m.type = NEWLEADER
                              /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = NEWLEADER}:
                                   /\ Assert(CanRecvFrom(self, m.from, messages),
-                                            "Failure of assertion at line 171, column 5 of macro called at line 262, column 13.")
+                                            "Failure of assertion at line 164, column 5 of macro called at line 250, column 13.")
                                   /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                      /\ messages' = Recv(self, m.from, messages)[2]
                                   /\ Assert(message'[self] = m,
-                                            "Failure of assertion at line 173, column 5 of macro called at line 262, column 13.")
+                                            "Failure of assertion at line 166, column 5 of macro called at line 250, column 13.")
                              /\ pc' = [pc EXCEPT ![self] = "HandleNewLeaderMessage"]
                              /\ UNCHANGED << stack, message_, confirmed_,
-                                             latest_epoch, i, confirmed, v,
+                                             latest_epoch, confirmed, v,
                                              last_epoch, last_leader, history,
                                              candidate, delivered, restart,
                                              ready, leader_candidate,
@@ -868,7 +817,7 @@ HandleNewLeaderMessage(self) == /\ pc[self] = "HandleNewLeaderMessage"
                                                            last_leader,
                                                            history >>
                                 /\ UNCHANGED << stack, message_, confirmed_,
-                                                message, latest_epoch, i,
+                                                message, latest_epoch,
                                                 confirmed, v, last_epoch,
                                                 candidate, delivered, ready,
                                                 leader_candidate, followers,
@@ -880,15 +829,15 @@ GetCommitLDMessage(self) == /\ pc[self] = "GetCommitLDMessage"
                             /\ \E m \in ReceivableMessages(self, messages) : m.type = COMMIT_LD
                             /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = COMMIT_LD}:
                                  /\ Assert(CanRecvFrom(self, m.from, messages),
-                                           "Failure of assertion at line 171, column 5 of macro called at line 279, column 13.")
+                                           "Failure of assertion at line 164, column 5 of macro called at line 267, column 13.")
                                  /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                     /\ messages' = Recv(self, m.from, messages)[2]
                                  /\ Assert(message'[self] = m,
-                                           "Failure of assertion at line 173, column 5 of macro called at line 279, column 13.")
+                                           "Failure of assertion at line 166, column 5 of macro called at line 267, column 13.")
                             /\ delivered' = [delivered EXCEPT ![self] = delivered[self] \union Range(history[self])]
                             /\ pc' = [pc EXCEPT ![self] = "End_FP2"]
                             /\ UNCHANGED << stack, message_, confirmed_,
-                                            latest_epoch, i, confirmed, v,
+                                            latest_epoch, confirmed, v,
                                             last_epoch, last_leader, history,
                                             candidate, restart, ready,
                                             leader_candidate, followers,
@@ -899,7 +848,7 @@ End_FP2(self) == /\ pc[self] = "End_FP2"
                  /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
                  /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                  /\ UNCHANGED << messages, message_, confirmed_, message,
-                                 latest_epoch, i, confirmed, v, last_epoch,
+                                 latest_epoch, confirmed, v, last_epoch,
                                  last_leader, history, candidate, delivered,
                                  restart, ready, leader_candidate, followers,
                                  selected_history, new_epoch, counter,
@@ -909,46 +858,30 @@ FP2(self) == GetNewLeaderMessage(self) \/ HandleNewLeaderMessage(self)
                 \/ GetCommitLDMessage(self) \/ End_FP2(self)
 
 LP2Start(self) == /\ pc[self] = "LP2Start"
-                  /\ Assert(IsQuorum(Range(followers[self]), Servers),
-                            "Failure of assertion at line 293, column 9.")
-                  /\ i' = [i EXCEPT ![self] = 1]
-                  /\ pc' = [pc EXCEPT ![self] = "NewLeader"]
-                  /\ UNCHANGED << messages, stack, message_, confirmed_,
-                                  message, latest_epoch, confirmed, v,
-                                  last_epoch, last_leader, history, candidate,
-                                  delivered, restart, ready, leader_candidate,
-                                  followers, selected_history, new_epoch,
-                                  counter, proposed, proposal_acks >>
-
-NewLeader(self) == /\ pc[self] = "NewLeader"
-                   /\ IF i[self] <= Len(followers[self])
-                         THEN /\ messages' = Send((FollowerProc(followers[self][i[self]])), (NewLeaderMessage(self, new_epoch[self], selected_history[self].history)), messages)
-                              /\ i' = [i EXCEPT ![self] = i[self]+1]
-                              /\ pc' = [pc EXCEPT ![self] = "NewLeader"]
-                         ELSE /\ pc' = [pc EXCEPT ![self] = "AwaitCommit"]
-                              /\ UNCHANGED << messages, i >>
-                   /\ UNCHANGED << stack, message_, confirmed_, message,
-                                   latest_epoch, confirmed, v, last_epoch,
-                                   last_leader, history, candidate, delivered,
-                                   restart, ready, leader_candidate, followers,
-                                   selected_history, new_epoch, counter,
-                                   proposed, proposal_acks >>
+                  /\ Assert(IsQuorum(followers[self], Servers),
+                            "Failure of assertion at line 281, column 9.")
+                  /\ messages' = SendToSet(({FollowerProc(f) : f \in followers[self]}), (NewLeaderMessage(self, new_epoch[self], selected_history[self].history)), messages)
+                  /\ pc' = [pc EXCEPT ![self] = "AwaitCommit"]
+                  /\ UNCHANGED << stack, message_, confirmed_, message,
+                                  latest_epoch, confirmed, v, last_epoch,
+                                  last_leader, history, candidate, delivered,
+                                  restart, ready, leader_candidate, followers,
+                                  selected_history, new_epoch, counter,
+                                  proposed, proposal_acks >>
 
 AwaitCommit(self) == /\ pc[self] = "AwaitCommit"
                      /\ IF ~IsQuorum(confirmed[self], Servers)
                            THEN /\ \E m \in ReceivableMessages(self, messages) : m.type = ACK_LD
                                 /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = ACK_LD}:
                                      /\ Assert(CanRecvFrom(self, m.from, messages),
-                                               "Failure of assertion at line 171, column 5 of macro called at line 304, column 21.")
+                                               "Failure of assertion at line 164, column 5 of macro called at line 287, column 21.")
                                      /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                         /\ messages' = Recv(self, m.from, messages)[2]
                                      /\ Assert(message'[self] = m,
-                                               "Failure of assertion at line 173, column 5 of macro called at line 304, column 21.")
+                                               "Failure of assertion at line 166, column 5 of macro called at line 287, column 21.")
                                 /\ confirmed' = [confirmed EXCEPT ![self] = confirmed[self] \union {message'[self].from.server}]
                                 /\ pc' = [pc EXCEPT ![self] = "AwaitCommit"]
-                                /\ i' = i
-                           ELSE /\ i' = [i EXCEPT ![self] = 1]
-                                /\ pc' = [pc EXCEPT ![self] = "SendCommitLeader"]
+                           ELSE /\ pc' = [pc EXCEPT ![self] = "SendCommitLeader"]
                                 /\ UNCHANGED << messages, message, confirmed >>
                      /\ UNCHANGED << stack, message_, confirmed_, latest_epoch,
                                      v, last_epoch, last_leader, history,
@@ -958,15 +891,10 @@ AwaitCommit(self) == /\ pc[self] = "AwaitCommit"
                                      proposed, proposal_acks >>
 
 SendCommitLeader(self) == /\ pc[self] = "SendCommitLeader"
-                          /\ IF i[self] <= Len(followers[self])
-                                THEN /\ messages' = Send((FollowerProc(followers[self][i[self]])), (CommitLeaderMessage(self, new_epoch[self])), messages)
-                                     /\ i' = [i EXCEPT ![self] = i[self]+1]
-                                     /\ pc' = [pc EXCEPT ![self] = "SendCommitLeader"]
-                                     /\ UNCHANGED << stack, confirmed >>
-                                ELSE /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
-                                     /\ confirmed' = [confirmed EXCEPT ![self] = Head(stack[self]).confirmed]
-                                     /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
-                                     /\ UNCHANGED << messages, i >>
+                          /\ messages' = SendToSet(({FollowerProc(f) : f \in followers[self]}), (CommitLeaderMessage(self, new_epoch[self])), messages)
+                          /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
+                          /\ confirmed' = [confirmed EXCEPT ![self] = Head(stack[self]).confirmed]
+                          /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                           /\ UNCHANGED << message_, confirmed_, message,
                                           latest_epoch, v, last_epoch,
                                           last_leader, history, candidate,
@@ -975,21 +903,20 @@ SendCommitLeader(self) == /\ pc[self] = "SendCommitLeader"
                                           selected_history, new_epoch, counter,
                                           proposed, proposal_acks >>
 
-LP2(self) == LP2Start(self) \/ NewLeader(self) \/ AwaitCommit(self)
-                \/ SendCommitLeader(self)
+LP2(self) == LP2Start(self) \/ AwaitCommit(self) \/ SendCommitLeader(self)
 
 GetProposalMessage(self) == /\ pc[self] = "GetProposalMessage"
                             /\ \E m \in ReceivableMessages(self, messages) : m.type = PROPOSE /\ m.from = LeaderProc(candidate[self])
                             /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = PROPOSE /\ msg.from = LeaderProc(candidate[self])}:
                                  /\ Assert(CanRecvFrom(self, m.from, messages),
-                                           "Failure of assertion at line 171, column 5 of macro called at line 325, column 13.")
+                                           "Failure of assertion at line 164, column 5 of macro called at line 304, column 13.")
                                  /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                     /\ messages' = Recv(self, m.from, messages)[2]
                                  /\ Assert(message'[self] = m,
-                                           "Failure of assertion at line 173, column 5 of macro called at line 325, column 13.")
+                                           "Failure of assertion at line 166, column 5 of macro called at line 304, column 13.")
                             /\ pc' = [pc EXCEPT ![self] = "HandleProposal"]
                             /\ UNCHANGED << stack, message_, confirmed_,
-                                            latest_epoch, i, confirmed, v,
+                                            latest_epoch, confirmed, v,
                                             last_epoch, last_leader, history,
                                             candidate, delivered, restart,
                                             ready, leader_candidate, followers,
@@ -1002,12 +929,11 @@ HandleProposal(self) == /\ pc[self] = "HandleProposal"
                         /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
                         /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                         /\ UNCHANGED << message_, confirmed_, message,
-                                        latest_epoch, i, confirmed, v,
-                                        last_epoch, last_leader, candidate,
-                                        delivered, restart, ready,
-                                        leader_candidate, followers,
-                                        selected_history, new_epoch, counter,
-                                        proposed, proposal_acks >>
+                                        latest_epoch, confirmed, v, last_epoch,
+                                        last_leader, candidate, delivered,
+                                        restart, ready, leader_candidate,
+                                        followers, selected_history, new_epoch,
+                                        counter, proposed, proposal_acks >>
 
 FollowerBroadcastAccept(self) == GetProposalMessage(self)
                                     \/ HandleProposal(self)
@@ -1016,18 +942,18 @@ GetCommitMessage(self) == /\ pc[self] = "GetCommitMessage"
                           /\ \E m \in ReceivableMessages(self, messages) : m.type = COMMIT /\ m.from = LeaderProc(candidate[self])
                           /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = COMMIT /\ msg.from = LeaderProc(candidate[self])}:
                                /\ Assert(CanRecvFrom(self, m.from, messages),
-                                         "Failure of assertion at line 171, column 5 of macro called at line 342, column 13.")
+                                         "Failure of assertion at line 164, column 5 of macro called at line 321, column 13.")
                                /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                   /\ messages' = Recv(self, m.from, messages)[2]
                                /\ Assert(message'[self] = m,
-                                         "Failure of assertion at line 173, column 5 of macro called at line 342, column 13.")
+                                         "Failure of assertion at line 166, column 5 of macro called at line 321, column 13.")
                           /\ IF \A trans \in Range(history[self]) : ZxidGreaterThan(message'[self].transaction.zxid, trans.zxid) => trans \in delivered[self]
                                 THEN /\ delivered' = [delivered EXCEPT ![self] = delivered[self] \union {message'[self].transaction}]
                                 ELSE /\ TRUE
                                      /\ UNCHANGED delivered
                           /\ pc' = [pc EXCEPT ![self] = "End_FollowerCommit"]
                           /\ UNCHANGED << stack, message_, confirmed_,
-                                          latest_epoch, i, confirmed, v,
+                                          latest_epoch, confirmed, v,
                                           last_epoch, last_leader, history,
                                           candidate, restart, ready,
                                           leader_candidate, followers,
@@ -1038,43 +964,26 @@ End_FollowerCommit(self) == /\ pc[self] = "End_FollowerCommit"
                             /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
                             /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                             /\ UNCHANGED << messages, message_, confirmed_,
-                                            message, latest_epoch, i,
-                                            confirmed, v, last_epoch,
-                                            last_leader, history, candidate,
-                                            delivered, restart, ready,
-                                            leader_candidate, followers,
-                                            selected_history, new_epoch,
-                                            counter, proposed, proposal_acks >>
+                                            message, latest_epoch, confirmed,
+                                            v, last_epoch, last_leader,
+                                            history, candidate, delivered,
+                                            restart, ready, leader_candidate,
+                                            followers, selected_history,
+                                            new_epoch, counter, proposed,
+                                            proposal_acks >>
 
 FollowerBroadcastCommit(self) == GetCommitMessage(self)
                                     \/ End_FollowerCommit(self)
 
-LeaderProposeStart(self) == /\ pc[self] = "LeaderProposeStart"
-                            /\ Assert(IsQuorum(Range(followers[self]), Servers),
-                                      "Failure of assertion at line 359, column 9.")
-                            /\ i' = [i EXCEPT ![self] = 1]
-                            /\ pc' = [pc EXCEPT ![self] = "SendProposal"]
-                            /\ UNCHANGED << messages, stack, message_,
-                                            confirmed_, message, latest_epoch,
-                                            confirmed, v, last_epoch,
-                                            last_leader, history, candidate,
-                                            delivered, restart, ready,
-                                            leader_candidate, followers,
-                                            selected_history, new_epoch,
-                                            counter, proposed, proposal_acks >>
-
 SendProposal(self) == /\ pc[self] = "SendProposal"
-                      /\ IF i[self] <= Len(followers[self])
-                            THEN /\ messages' = Send((FollowerProc(followers[self][i[self]])), (ProposalMessage(self, new_epoch[self], Transaction(v[self], Zxid(new_epoch[self], counter[self])))), messages)
-                                 /\ i' = [i EXCEPT ![self] = i[self]+1]
-                                 /\ pc' = [pc EXCEPT ![self] = "SendProposal"]
-                                 /\ UNCHANGED << stack, v, counter, proposed >>
-                            ELSE /\ proposed' = [proposed EXCEPT ![self] = Append(proposed[self], Transaction(v[self], Zxid(new_epoch[self], counter[self])))]
-                                 /\ counter' = [counter EXCEPT ![self] = counter[self] + 1]
-                                 /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
-                                 /\ v' = [v EXCEPT ![self] = Head(stack[self]).v]
-                                 /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
-                                 /\ UNCHANGED << messages, i >>
+                      /\ Assert(IsQuorum(followers[self], Servers),
+                                "Failure of assertion at line 338, column 9.")
+                      /\ messages' = SendToSet(({FollowerProc(f) : f \in followers[self]}), (ProposalMessage(self, new_epoch[self], Transaction(v[self], Zxid(new_epoch[self], counter[self])))), messages)
+                      /\ proposed' = [proposed EXCEPT ![self] = Append(proposed[self], Transaction(v[self], Zxid(new_epoch[self], counter[self])))]
+                      /\ counter' = [counter EXCEPT ![self] = counter[self] + 1]
+                      /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
+                      /\ v' = [v EXCEPT ![self] = Head(stack[self]).v]
+                      /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                       /\ UNCHANGED << message_, confirmed_, message,
                                       latest_epoch, confirmed, last_epoch,
                                       last_leader, history, candidate,
@@ -1083,23 +992,19 @@ SendProposal(self) == /\ pc[self] = "SendProposal"
                                       selected_history, new_epoch,
                                       proposal_acks >>
 
-LeaderPropose(self) == LeaderProposeStart(self) \/ SendProposal(self)
+LeaderPropose(self) == SendProposal(self)
 
 GetProposeAckMessage(self) == /\ pc[self] = "GetProposeAckMessage"
                               /\ \E m \in ReceivableMessages(self, messages) : m.type = ACK_P
                               /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = ACK_P}:
                                    /\ Assert(CanRecvFrom(self, m.from, messages),
-                                             "Failure of assertion at line 171, column 5 of macro called at line 377, column 13.")
+                                             "Failure of assertion at line 164, column 5 of macro called at line 352, column 13.")
                                    /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                       /\ messages' = Recv(self, m.from, messages)[2]
                                    /\ Assert(message'[self] = m,
-                                             "Failure of assertion at line 173, column 5 of macro called at line 377, column 13.")
+                                             "Failure of assertion at line 166, column 5 of macro called at line 352, column 13.")
                               /\ proposal_acks' = [proposal_acks EXCEPT ![self][message'[self].transaction, message'[self].epoch] = proposal_acks[self][message'[self].transaction, message'[self].epoch] \union {message'[self].from.server}]
-                              /\ IF IsQuorum(proposal_acks'[self][message'[self].transaction, message'[self].epoch], Servers)
-                                    THEN /\ i' = [i EXCEPT ![self] = 1]
-                                         /\ pc' = [pc EXCEPT ![self] = "SendCommit"]
-                                    ELSE /\ pc' = [pc EXCEPT ![self] = "End_LeaderCommit"]
-                                         /\ i' = i
+                              /\ pc' = [pc EXCEPT ![self] = "SendCommit"]
                               /\ UNCHANGED << stack, message_, confirmed_,
                                               latest_epoch, confirmed, v,
                                               last_epoch, last_leader, history,
@@ -1109,12 +1014,11 @@ GetProposeAckMessage(self) == /\ pc[self] = "GetProposeAckMessage"
                                               new_epoch, counter, proposed >>
 
 SendCommit(self) == /\ pc[self] = "SendCommit"
-                    /\ IF i[self] <= Len(followers[self])
-                          THEN /\ messages' = Send((FollowerProc(followers[self][i[self]])), (CommitProposalMessage(self, new_epoch[self], message[self].transaction)), messages)
-                               /\ i' = [i EXCEPT ![self] = i[self]+1]
-                               /\ pc' = [pc EXCEPT ![self] = "SendCommit"]
-                          ELSE /\ pc' = [pc EXCEPT ![self] = "End_LeaderCommit"]
-                               /\ UNCHANGED << messages, i >>
+                    /\ IF IsQuorum(proposal_acks[self][message[self].transaction, message[self].epoch], Servers)
+                          THEN /\ messages' = SendToSet(({FollowerProc(f) : f \in followers[self]}), (CommitProposalMessage(self, new_epoch[self], message[self].transaction)), messages)
+                          ELSE /\ TRUE
+                               /\ UNCHANGED messages
+                    /\ pc' = [pc EXCEPT ![self] = "End_LeaderCommit"]
                     /\ UNCHANGED << stack, message_, confirmed_, message,
                                     latest_epoch, confirmed, v, last_epoch,
                                     last_leader, history, candidate, delivered,
@@ -1126,8 +1030,8 @@ End_LeaderCommit(self) == /\ pc[self] = "End_LeaderCommit"
                           /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
                           /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                           /\ UNCHANGED << messages, message_, confirmed_,
-                                          message, latest_epoch, i, confirmed,
-                                          v, last_epoch, last_leader, history,
+                                          message, latest_epoch, confirmed, v,
+                                          last_epoch, last_leader, history,
                                           candidate, delivered, restart, ready,
                                           leader_candidate, followers,
                                           selected_history, new_epoch, counter,
@@ -1140,17 +1044,17 @@ GetNewCepochMessage(self) == /\ pc[self] = "GetNewCepochMessage"
                              /\ \E m \in ReceivableMessages(self, messages) : m.type = CEPOCH
                              /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = CEPOCH}:
                                   /\ Assert(CanRecvFrom(self, m.from, messages),
-                                            "Failure of assertion at line 171, column 5 of macro called at line 402, column 13.")
+                                            "Failure of assertion at line 164, column 5 of macro called at line 373, column 13.")
                                   /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                      /\ messages' = Recv(self, m.from, messages)[2]
                                   /\ Assert(message'[self] = m,
-                                            "Failure of assertion at line 173, column 5 of macro called at line 402, column 13.")
+                                            "Failure of assertion at line 166, column 5 of macro called at line 373, column 13.")
                              /\ IF message'[self].last_epoch < new_epoch[self]
                                    THEN /\ pc' = [pc EXCEPT ![self] = "SendNewEpoch"]
                                    ELSE /\ TRUE
                                         /\ pc' = [pc EXCEPT ![self] = "End_LeaderSetupNewFollower"]
                              /\ UNCHANGED << stack, message_, confirmed_,
-                                             latest_epoch, i, confirmed, v,
+                                             latest_epoch, confirmed, v,
                                              last_epoch, last_leader, history,
                                              candidate, delivered, restart,
                                              ready, leader_candidate,
@@ -1162,9 +1066,9 @@ SendNewEpoch(self) == /\ pc[self] = "SendNewEpoch"
                       /\ messages' = Send((message[self].from), (NewEpochMessage(self, new_epoch[self])), messages)
                       /\ pc' = [pc EXCEPT ![self] = "SendNewLeader"]
                       /\ UNCHANGED << stack, message_, confirmed_, message,
-                                      latest_epoch, i, confirmed, v,
-                                      last_epoch, last_leader, history,
-                                      candidate, delivered, restart, ready,
+                                      latest_epoch, confirmed, v, last_epoch,
+                                      last_leader, history, candidate,
+                                      delivered, restart, ready,
                                       leader_candidate, followers,
                                       selected_history, new_epoch, counter,
                                       proposed, proposal_acks >>
@@ -1173,9 +1077,9 @@ SendNewLeader(self) == /\ pc[self] = "SendNewLeader"
                        /\ messages' = Send((message[self].from), (NewLeaderMessage(self, new_epoch[self], selected_history[self].history \o proposed[self])), messages)
                        /\ pc' = [pc EXCEPT ![self] = "End_LeaderSetupNewFollower"]
                        /\ UNCHANGED << stack, message_, confirmed_, message,
-                                       latest_epoch, i, confirmed, v,
-                                       last_epoch, last_leader, history,
-                                       candidate, delivered, restart, ready,
+                                       latest_epoch, confirmed, v, last_epoch,
+                                       last_leader, history, candidate,
+                                       delivered, restart, ready,
                                        leader_candidate, followers,
                                        selected_history, new_epoch, counter,
                                        proposed, proposal_acks >>
@@ -1185,8 +1089,8 @@ End_LeaderSetupNewFollower(self) == /\ pc[self] = "End_LeaderSetupNewFollower"
                                     /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                                     /\ UNCHANGED << messages, message_,
                                                     confirmed_, message,
-                                                    latest_epoch, i, confirmed,
-                                                    v, last_epoch, last_leader,
+                                                    latest_epoch, confirmed, v,
+                                                    last_epoch, last_leader,
                                                     history, candidate,
                                                     delivered, restart, ready,
                                                     leader_candidate,
@@ -1204,14 +1108,14 @@ GetAckNewLeaderMessage(self) == /\ pc[self] = "GetAckNewLeaderMessage"
                                 /\ \E m \in ReceivableMessages(self, messages) : m.type = ACK_LD
                                 /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = ACK_LD}:
                                      /\ Assert(CanRecvFrom(self, m.from, messages),
-                                               "Failure of assertion at line 171, column 5 of macro called at line 424, column 13.")
+                                               "Failure of assertion at line 164, column 5 of macro called at line 395, column 13.")
                                      /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                         /\ messages' = Recv(self, m.from, messages)[2]
                                      /\ Assert(message'[self] = m,
-                                               "Failure of assertion at line 173, column 5 of macro called at line 424, column 13.")
+                                               "Failure of assertion at line 166, column 5 of macro called at line 395, column 13.")
                                 /\ pc' = [pc EXCEPT ![self] = "HandleAckLeader"]
                                 /\ UNCHANGED << stack, message_, confirmed_,
-                                                latest_epoch, i, confirmed, v,
+                                                latest_epoch, confirmed, v,
                                                 last_epoch, last_leader,
                                                 history, candidate, delivered,
                                                 restart, ready,
@@ -1223,13 +1127,13 @@ GetAckNewLeaderMessage(self) == /\ pc[self] = "GetAckNewLeaderMessage"
 HandleAckLeader(self) == /\ pc[self] = "HandleAckLeader"
                          /\ IF message[self].epoch = new_epoch[self]
                                THEN /\ messages' = Send((message[self].from), (CommitLeaderMessage(self, new_epoch[self])), messages)
-                                    /\ followers' = [followers EXCEPT ![self] = Append(followers[self], message[self].from.server)]
+                                    /\ followers' = [followers EXCEPT ![self] = followers[self] \union {message[self].from.server}]
                                ELSE /\ TRUE
                                     /\ UNCHANGED << messages, followers >>
                          /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
                          /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                          /\ UNCHANGED << message_, confirmed_, message,
-                                         latest_epoch, i, confirmed, v,
+                                         latest_epoch, confirmed, v,
                                          last_epoch, last_leader, history,
                                          candidate, delivered, restart, ready,
                                          leader_candidate, selected_history,
@@ -1248,7 +1152,7 @@ FollowerDiscover(self) == /\ pc[self] = "FollowerDiscover"
                           /\ message_' = [message_ EXCEPT ![self] = defaultInitValue]
                           /\ pc' = [pc EXCEPT ![self] = "Notify"]
                           /\ UNCHANGED << messages, confirmed_, message,
-                                          latest_epoch, i, confirmed, v,
+                                          latest_epoch, confirmed, v,
                                           last_epoch, last_leader, history,
                                           delivered, restart, ready,
                                           leader_candidate, followers,
@@ -1261,13 +1165,13 @@ FollowerSynchronize(self) == /\ pc[self] = "FollowerSynchronize"
                                                                   \o stack[self]]
                              /\ pc' = [pc EXCEPT ![self] = "GetNewLeaderMessage"]
                              /\ UNCHANGED << messages, message_, confirmed_,
-                                             message, latest_epoch, i,
-                                             confirmed, v, last_epoch,
-                                             last_leader, history, candidate,
-                                             delivered, restart, ready,
-                                             leader_candidate, followers,
-                                             selected_history, new_epoch,
-                                             counter, proposed, proposal_acks >>
+                                             message, latest_epoch, confirmed,
+                                             v, last_epoch, last_leader,
+                                             history, candidate, delivered,
+                                             restart, ready, leader_candidate,
+                                             followers, selected_history,
+                                             new_epoch, counter, proposed,
+                                             proposal_acks >>
 
 FollowerSynchronizeCheckRestart(self) == /\ pc[self] = "FollowerSynchronizeCheckRestart"
                                          /\ IF restart[self]
@@ -1276,7 +1180,7 @@ FollowerSynchronizeCheckRestart(self) == /\ pc[self] = "FollowerSynchronizeCheck
                                          /\ UNCHANGED << messages, stack,
                                                          message_, confirmed_,
                                                          message, latest_epoch,
-                                                         i, confirmed, v,
+                                                         confirmed, v,
                                                          last_epoch,
                                                          last_leader, history,
                                                          candidate, delivered,
@@ -1295,7 +1199,7 @@ SetReady(self) == /\ pc[self] = "SetReady"
                              /\ ready' = ready
                   /\ pc' = [pc EXCEPT ![self] = "FollowerBroadcast"]
                   /\ UNCHANGED << messages, stack, message_, confirmed_,
-                                  message, latest_epoch, i, confirmed, v,
+                                  message, latest_epoch, confirmed, v,
                                   last_epoch, last_leader, history, candidate,
                                   delivered, restart, leader_candidate,
                                   followers, selected_history, new_epoch,
@@ -1313,8 +1217,8 @@ FollowerBroadcast(self) == /\ pc[self] = "FollowerBroadcast"
                                                                       \o stack[self]]
                                  /\ pc' = [pc EXCEPT ![self] = "GetCommitMessage"]
                            /\ UNCHANGED << messages, message_, confirmed_,
-                                           message, latest_epoch, i, confirmed,
-                                           v, last_epoch, last_leader, history,
+                                           message, latest_epoch, confirmed, v,
+                                           last_epoch, last_leader, history,
                                            candidate, delivered, restart,
                                            ready, leader_candidate, followers,
                                            selected_history, new_epoch,
@@ -1324,7 +1228,7 @@ End_Follower(self) == /\ pc[self] = "End_Follower"
                       /\ TRUE
                       /\ pc' = [pc EXCEPT ![self] = "Done"]
                       /\ UNCHANGED << messages, stack, message_, confirmed_,
-                                      message, latest_epoch, i, confirmed, v,
+                                      message, latest_epoch, confirmed, v,
                                       last_epoch, last_leader, history,
                                       candidate, delivered, restart, ready,
                                       leader_candidate, followers,
@@ -1343,17 +1247,15 @@ LeaderDiscover(self) == /\ pc[self] = "LeaderDiscover"
                                                                             pc        |->  "LeaderSynchronize",
                                                                             confirmed_ |->  confirmed_[self],
                                                                             message   |->  message[self],
-                                                                            latest_epoch |->  latest_epoch[self],
-                                                                            i         |->  i[self] ] >>
+                                                                            latest_epoch |->  latest_epoch[self] ] >>
                                                                         \o stack[self]]
                                    /\ confirmed_' = [confirmed_ EXCEPT ![self] = {}]
                                    /\ message' = [message EXCEPT ![self] = defaultInitValue]
                                    /\ latest_epoch' = [latest_epoch EXCEPT ![self] = 0]
-                                   /\ i' = [i EXCEPT ![self] = 0]
                                    /\ pc' = [pc EXCEPT ![self] = "GatherQuorum"]
                               ELSE /\ pc' = [pc EXCEPT ![self] = "Done"]
                                    /\ UNCHANGED << stack, confirmed_, message,
-                                                   latest_epoch, i >>
+                                                   latest_epoch >>
                         /\ UNCHANGED << messages, message_, confirmed, v,
                                         last_epoch, last_leader, history,
                                         candidate, delivered, restart, ready,
@@ -1368,7 +1270,7 @@ LeaderSynchronize(self) == /\ pc[self] = "LeaderSynchronize"
                            /\ confirmed' = [confirmed EXCEPT ![self] = {}]
                            /\ pc' = [pc EXCEPT ![self] = "LP2Start"]
                            /\ UNCHANGED << messages, message_, confirmed_,
-                                           message, latest_epoch, i, v,
+                                           message, latest_epoch, v,
                                            last_epoch, last_leader, history,
                                            candidate, delivered, restart,
                                            ready, leader_candidate, followers,
@@ -1382,7 +1284,7 @@ LeaderBroadcast(self) == /\ pc[self] = "LeaderBroadcast"
                                                                                 v         |->  v[self] ] >>
                                                                             \o stack[self]]
                                        /\ v' = [v EXCEPT ![self] = val]
-                                    /\ pc' = [pc EXCEPT ![self] = "LeaderProposeStart"]
+                                    /\ pc' = [pc EXCEPT ![self] = "SendProposal"]
                             \/ /\ \E m \in ReceivableMessages(self, messages) : m.type = ACK_P
                                /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "LeaderCommit",
                                                                         pc        |->  "LeaderBroadcast" ] >>
@@ -1402,7 +1304,7 @@ LeaderBroadcast(self) == /\ pc[self] = "LeaderBroadcast"
                                /\ pc' = [pc EXCEPT ![self] = "GetAckNewLeaderMessage"]
                                /\ v' = v
                          /\ UNCHANGED << messages, message_, confirmed_,
-                                         message, latest_epoch, i, confirmed,
+                                         message, latest_epoch, confirmed,
                                          last_epoch, last_leader, history,
                                          candidate, delivered, restart, ready,
                                          leader_candidate, followers,
@@ -1431,6 +1333,35 @@ Spec == Init /\ [][Next]_vars
 Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 \* END TRANSLATION
+
+
+
+
+\* Type invariant checks
+\* TODO: ensure that the queue is a sequence
+LeaderMessagesOK(proc, queue) == /\ proc \in LeaderProcesses
+                                 /\ \A from \in DOMAIN queue:
+                                    /\ from \in Processes
+                                    /\ \A m \in Range(queue[from]):
+                                        m \in FollowerMessageType
+
+FollowerMessagesOK(proc, queue) ==  /\ proc \in FollowerProcesses
+                                    /\ \A from \in DOMAIN queue:
+                                        /\ from \in Processes
+                                        /\ \A m \in Range(queue[from]):
+                                            m \in LeaderMessageType
+
+\* Leaders should only receive messages from followers, and vice versa
+MessagesOK == \A proc \in DOMAIN messages:
+                \/ proc.role = Leader /\ LeaderMessagesOK(proc, messages[proc])
+                \/ proc.role = Follower /\ FollowerMessagesOK(proc, messages[proc])
+
+FollowersOK == \A proc \in DOMAIN followers:
+                    /\ proc \in LeaderProcesses
+                    /\ followers[proc] \in SUBSET Servers
+
+TypeOK == /\ MessagesOK
+          /\ FollowersOK
 
 
 
