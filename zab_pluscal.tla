@@ -1427,6 +1427,15 @@ BroadcastIntegrity == \A proc \in DOMAIN delivered :
                         \A transaction \in delivered[proc] :
                             transaction \in broadcast_transactions
 
+\* Claim 31 in "Dissecting Zab"
+\* If a follower f delivers transaction t, and follower f' delivers transaction t', then f' delivers t or f delivers t'
+Agreement == \A p_1 \in DOMAIN delivered, p_2 \in DOMAIN delivered :
+                \/ p_1 = p_2
+                \/ \A t_1 \in delivered[p_1], t_2 \in delivered[p_2] :
+                    \/ t_1 /= t_2
+                    \/ t_1 \in delivered[p_2]
+                    \/ t_2 \in delivered[p_1]
+
 
 \** Debugging checks
 ProgressCheck == /\ \E proc \in DOMAIN delivered: Cardinality(delivered[proc]) = 0
