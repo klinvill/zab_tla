@@ -332,7 +332,10 @@ begin
         \* Only deliver if all previous transactions in the history have been delivered as per zxid
         \* TODO: It's not specified in the "Dissecting Zab" paper that a follower must have added a transaction to its
         \*  history before it can commit that transaction, but this is needed for agreement.
+        \* TODO: It's not specified in the "Dissecting Zab" paper that a follower should ignore commit messages for
+        \*  transactions it has already delivered, but this is needed for the total order invariant.
         if  /\ message[self].transaction \in Range(history)
+            /\ message[self].transaction \notin Range(delivered)
             /\ \A trans \in Range(history) : ZxidGreaterThan(message[self].transaction.zxid, trans.zxid) => trans \in Range(delivered)
         then
             delivered := Append(delivered, message[self].transaction);
@@ -511,7 +514,7 @@ begin
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "4d445cf2" /\ chksum(tla) = "71c371c6")
+\* BEGIN TRANSLATION (chksum(pcal) = "a4abda78" /\ chksum(tla) = "4a249292")
 \* Procedure variable confirmed of procedure LP1 at line 211 col 11 changed to confirmed_
 CONSTANT defaultInitValue
 VARIABLES messages, message, primaries, broadcast_transactions, pc, stack
@@ -977,6 +980,7 @@ GetCommitMessage(self) == /\ pc[self] = "GetCommitMessage"
                                /\ Assert(message'[self] = m,
                                          "Failure of assertion at line 177, column 5 of macro called at line 328, column 13.")
                           /\ IF /\ message'[self].transaction \in Range(history[self])
+                                /\ message'[self].transaction \notin Range(delivered[self])
                                 /\ \A trans \in Range(history[self]) : ZxidGreaterThan(message'[self].transaction.zxid, trans.zxid) => trans \in Range(delivered[self])
                                 THEN /\ delivered' = [delivered EXCEPT ![self] = Append(delivered[self], message'[self].transaction)]
                                 ELSE /\ TRUE
@@ -995,7 +999,7 @@ FollowerBroadcastCommit(self) == GetCommitMessage(self)
 
 SendProposal(self) == /\ pc[self] = "SendProposal"
                       /\ Assert(IsQuorum(followers[self], Servers),
-                                "Failure of assertion at line 348, column 9.")
+                                "Failure of assertion at line 351, column 9.")
                       /\ messages' = SendToSet(({FollowerProc(f) : f \in followers[self]}), (ProposalMessage(self, new_epoch[self], Transaction(v[self], Zxid(new_epoch[self], counter[self])))), messages)
                       /\ proposed' = [proposed EXCEPT ![self] = Append(proposed[self], Transaction(v[self], Zxid(new_epoch[self], counter[self])))]
                       /\ broadcast_transactions' = (broadcast_transactions \union {Transaction(v[self], Zxid(new_epoch[self], counter[self]))})
@@ -1016,11 +1020,11 @@ GetProposeAckMessage(self) == /\ pc[self] = "GetProposeAckMessage"
                               /\ \E m \in ReceivableMessages(self, messages) : m.type = ACK_P
                               /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = ACK_P}:
                                    /\ Assert(CanRecvFrom(self, m.from, messages),
-                                             "Failure of assertion at line 175, column 5 of macro called at line 363, column 13.")
+                                             "Failure of assertion at line 175, column 5 of macro called at line 366, column 13.")
                                    /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                       /\ messages' = Recv(self, m.from, messages)[2]
                                    /\ Assert(message'[self] = m,
-                                             "Failure of assertion at line 177, column 5 of macro called at line 363, column 13.")
+                                             "Failure of assertion at line 177, column 5 of macro called at line 366, column 13.")
                               /\ proposal_acks' = [proposal_acks EXCEPT ![self][message'[self].transaction, message'[self].epoch] = proposal_acks[self][message'[self].transaction, message'[self].epoch] \union {message'[self].from.server}]
                               /\ pc' = [pc EXCEPT ![self] = "SendCommit"]
                               /\ UNCHANGED << primaries,
@@ -1066,11 +1070,11 @@ GetNewCepochMessage(self) == /\ pc[self] = "GetNewCepochMessage"
                              /\ \E m \in ReceivableMessages(self, messages) : m.type = CEPOCH
                              /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = CEPOCH}:
                                   /\ Assert(CanRecvFrom(self, m.from, messages),
-                                            "Failure of assertion at line 175, column 5 of macro called at line 384, column 13.")
+                                            "Failure of assertion at line 175, column 5 of macro called at line 387, column 13.")
                                   /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                      /\ messages' = Recv(self, m.from, messages)[2]
                                   /\ Assert(message'[self] = m,
-                                            "Failure of assertion at line 177, column 5 of macro called at line 384, column 13.")
+                                            "Failure of assertion at line 177, column 5 of macro called at line 387, column 13.")
                              /\ IF message'[self].last_epoch < new_epoch[self]
                                    THEN /\ pc' = [pc EXCEPT ![self] = "SendNewEpoch"]
                                    ELSE /\ TRUE
@@ -1133,11 +1137,11 @@ GetAckNewLeaderMessage(self) == /\ pc[self] = "GetAckNewLeaderMessage"
                                 /\ \E m \in ReceivableMessages(self, messages) : m.type = ACK_LD
                                 /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = ACK_LD}:
                                      /\ Assert(CanRecvFrom(self, m.from, messages),
-                                               "Failure of assertion at line 175, column 5 of macro called at line 406, column 13.")
+                                               "Failure of assertion at line 175, column 5 of macro called at line 409, column 13.")
                                      /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                         /\ messages' = Recv(self, m.from, messages)[2]
                                      /\ Assert(message'[self] = m,
-                                               "Failure of assertion at line 177, column 5 of macro called at line 406, column 13.")
+                                               "Failure of assertion at line 177, column 5 of macro called at line 409, column 13.")
                                 /\ pc' = [pc EXCEPT ![self] = "HandleAckLeader"]
                                 /\ UNCHANGED << primaries,
                                                 broadcast_transactions, stack,
@@ -1174,11 +1178,11 @@ DiscardAckEpochMessage(self) == /\ pc[self] = "DiscardAckEpochMessage"
                                 /\ \E m \in ReceivableMessages(self, messages) : m.type = ACK_E
                                 /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = ACK_E}:
                                      /\ Assert(CanRecvFrom(self, m.from, messages),
-                                               "Failure of assertion at line 175, column 5 of macro called at line 422, column 13.")
+                                               "Failure of assertion at line 175, column 5 of macro called at line 425, column 13.")
                                      /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                         /\ messages' = Recv(self, m.from, messages)[2]
                                      /\ Assert(message'[self] = m,
-                                               "Failure of assertion at line 177, column 5 of macro called at line 422, column 13.")
+                                               "Failure of assertion at line 177, column 5 of macro called at line 425, column 13.")
                                 /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
                                 /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                                 /\ UNCHANGED << primaries,
@@ -1449,6 +1453,15 @@ Agreement == \A p_1 \in DOMAIN delivered, p_2 \in DOMAIN delivered :
 \* Claim 32 in "Dissecting Zab"
 \* If some follower delivers <v,z> before <v',z'>, then any follower that delivers <v',z'> must also deliver <v,z> and
 \* deliver it before <v', z'>.
+\* TODO: potential bug in protocol:
+\*  1) Leader moves to broadcast phase with followers 1 and 2, proposes several transactions.
+\*  2) Follower 3 added to Leader quorum with initial history containing the proposed transactions (as per step l.3.3).
+\*      This history is then delivered (effectively committed) as per step f.2.2. This can occur before any of those
+\*      transactions are ever ack'd by the quorum.
+\*  3) Crashes result in a new leader before the quorum receives commit messages. A new epoch is started. Due to
+\*      crashes, follower 3 does not join the initial quorum. An empty history is selected as the initial history.
+\*  4) New transactions are proposed, ack'd, committed, and delivered. Now followers 1 and 2 have delivered different
+\*      transactions than follower 3.
 TotalOrder == \A p_1 \in DOMAIN delivered, p_2 \in DOMAIN delivered :
                 \/ p_1 = p_2
                 \/ \A i \in 1..Len(delivered[p_1]) : \A j \in i..Len(delivered[p_1]) :
@@ -1457,12 +1470,10 @@ TotalOrder == \A p_1 \in DOMAIN delivered, p_2 \in DOMAIN delivered :
                         \* indices of the transactions in the second follower
                         i_t_2 == Indices(t, delivered[p_2])
                         i_t_p_2 == Indices(t_p, delivered[p_2])
-                    IN t_p \in Range(delivered[p_2]) =>
-                        /\ t \in Range(delivered[p_2])
-                        \* should only have delivered values once
-                        /\ Cardinality(i_t_2) = 1
-                        /\ Cardinality(i_t_p_2) = 1
-                        /\ \A a \in i_t_2, b \in i_t_p_2 : a < b
+                    IN  \/ t = t_p
+                        \/ t_p \in Range(delivered[p_2]) =>
+                            /\ t \in Range(delivered[p_2])
+                            /\ \A a \in i_t_2, b \in i_t_p_2 : a < b
 
 \** Debugging checks
 ProgressCheck == /\ \E proc \in DOMAIN delivered: Len(delivered[proc]) < 2
