@@ -133,6 +133,9 @@ define
 
     Range(seq) == {seq[i] : i \in DOMAIN seq}
 
+    \* Returns the set of indices for the value x in the sequence
+    Indices(x, seq) == {i \in DOMAIN seq : seq[i] = x}
+
     \* Returns the last element in the sequence, or the provided default if the sequence is empty
     LastOrDefault(seq, default) == IF Len(seq) = 0 THEN default ELSE seq[Len(seq)]
 
@@ -272,8 +275,7 @@ begin
             DoRecvMessage(m);
         end with;
 
-        \* TODO: should delivered be a tuple since the transactions in a history should be delivered in-order?
-        delivered := delivered \union Range(history);
+        delivered := delivered \o history;
     End_FP2:
         return;
 end procedure;
@@ -328,8 +330,8 @@ begin
 
         \* TODO: if all previous transactions have not been delivered yet, should we discard the COMMIT message or try to save it for later?
         \* Only deliver if all previous transactions in the history have been delivered as per zxid
-        if \A trans \in Range(history) : ZxidGreaterThan(message[self].transaction.zxid, trans.zxid) => trans \in delivered then
-            delivered := delivered \union {message[self].transaction};
+        if \A trans \in Range(history) : ZxidGreaterThan(message[self].transaction.zxid, trans.zxid) => trans \in Range(delivered) then
+            delivered := Append(delivered, message[self].transaction);
         end if;
 
         return;
@@ -425,7 +427,7 @@ variables last_epoch = 0,       \* Last new epoch proposol acknowledged
           last_leader = 0,      \* Last new leader proposal acknowledged
           history = <<>>,              \* In-order record of all the accepted value proposals
           candidate,            \* Candidate selected by leader oracle
-          delivered = {},       \* Tracks the transactions that have been delivered to the application by Zab
+          delivered = <<>>,       \* Tracks the transactions that have been delivered to the application by Zab
           \* TODO: how should we structure the spec to be able to jump back to the beginning of the process? Right now we use a flag
           restart = FALSE;
 begin
@@ -505,8 +507,8 @@ begin
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "38aa9012" /\ chksum(tla) = "aadd9d8b")
-\* Procedure variable confirmed of procedure LP1 at line 208 col 11 changed to confirmed_
+\* BEGIN TRANSLATION (chksum(pcal) = "8852633f" /\ chksum(tla) = "7c43262a")
+\* Procedure variable confirmed of procedure LP1 at line 211 col 11 changed to confirmed_
 CONSTANT defaultInitValue
 VARIABLES messages, message, primaries, broadcast_transactions, pc, stack
 
@@ -611,6 +613,9 @@ Max(a, b) == IF b > a THEN b ELSE a
 Range(seq) == {seq[i] : i \in DOMAIN seq}
 
 
+Indices(x, seq) == {i \in DOMAIN seq : seq[i] = x}
+
+
 LastOrDefault(seq, default) == IF Len(seq) = 0 THEN default ELSE seq[Len(seq)]
 
 
@@ -649,7 +654,7 @@ Init == (* Global variables *)
         /\ last_leader = [self \in FollowerProcesses |-> 0]
         /\ history = [self \in FollowerProcesses |-> <<>>]
         /\ candidate = [self \in FollowerProcesses |-> defaultInitValue]
-        /\ delivered = [self \in FollowerProcesses |-> {}]
+        /\ delivered = [self \in FollowerProcesses |-> <<>>]
         /\ restart = [self \in FollowerProcesses |-> FALSE]
         (* Process leader *)
         /\ leader_candidate = [self \in LeaderProcesses |-> defaultInitValue]
@@ -677,11 +682,11 @@ GetAckEpochMessage(self) == /\ pc[self] = "GetAckEpochMessage"
                             /\ \E m \in ReceivableMessages(self, messages) : m.type = NEWEPOCH /\ m.from = LeaderProc(candidate[self])
                             /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = NEWEPOCH /\ msg.from = LeaderProc(candidate[self])}:
                                  /\ Assert(CanRecvFrom(self, m.from, messages),
-                                           "Failure of assertion at line 172, column 5 of macro called at line 192, column 13.")
+                                           "Failure of assertion at line 175, column 5 of macro called at line 195, column 13.")
                                  /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                     /\ messages' = Recv(self, m.from, messages)[2]
                                  /\ Assert(message'[self] = m,
-                                           "Failure of assertion at line 174, column 5 of macro called at line 192, column 13.")
+                                           "Failure of assertion at line 177, column 5 of macro called at line 195, column 13.")
                             /\ pc' = [pc EXCEPT ![self] = "HandleAckEpochMessage"]
                             /\ UNCHANGED << primaries, broadcast_transactions,
                                             stack, confirmed_, latest_epoch,
@@ -728,11 +733,11 @@ GatherQuorum(self) == /\ pc[self] = "GatherQuorum"
                             THEN /\ \E m \in ReceivableMessages(self, messages) : m.type = CEPOCH
                                  /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = CEPOCH}:
                                       /\ Assert(CanRecvFrom(self, m.from, messages),
-                                                "Failure of assertion at line 172, column 5 of macro called at line 215, column 21.")
+                                                "Failure of assertion at line 175, column 5 of macro called at line 218, column 21.")
                                       /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                          /\ messages' = Recv(self, m.from, messages)[2]
                                       /\ Assert(message'[self] = m,
-                                                "Failure of assertion at line 174, column 5 of macro called at line 215, column 21.")
+                                                "Failure of assertion at line 177, column 5 of macro called at line 218, column 21.")
                                  /\ latest_epoch' = [latest_epoch EXCEPT ![self] = Max(latest_epoch[self], message'[self].last_epoch)]
                                  /\ IF message'[self].from.server \notin followers[self]
                                        THEN /\ followers' = [followers EXCEPT ![self] = followers[self] \union {message'[self].from.server}]
@@ -741,7 +746,7 @@ GatherQuorum(self) == /\ pc[self] = "GatherQuorum"
                                  /\ pc' = [pc EXCEPT ![self] = "GatherQuorum"]
                                  /\ UNCHANGED new_epoch
                             ELSE /\ Assert(IsQuorum(followers[self], Servers),
-                                           "Failure of assertion at line 226, column 9.")
+                                           "Failure of assertion at line 229, column 9.")
                                  /\ new_epoch' = [new_epoch EXCEPT ![self] = latest_epoch[self] + 1]
                                  /\ pc' = [pc EXCEPT ![self] = "NewEpoch"]
                                  /\ UNCHANGED << messages, message,
@@ -769,11 +774,11 @@ HistorySelection(self) == /\ pc[self] = "HistorySelection"
                                 THEN /\ \E m \in ReceivableMessages(self, messages) : m.type = ACK_E
                                      /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = ACK_E}:
                                           /\ Assert(CanRecvFrom(self, m.from, messages),
-                                                    "Failure of assertion at line 172, column 5 of macro called at line 234, column 21.")
+                                                    "Failure of assertion at line 175, column 5 of macro called at line 237, column 21.")
                                           /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                              /\ messages' = Recv(self, m.from, messages)[2]
                                           /\ Assert(message'[self] = m,
-                                                    "Failure of assertion at line 174, column 5 of macro called at line 234, column 21.")
+                                                    "Failure of assertion at line 177, column 5 of macro called at line 237, column 21.")
                                      /\ confirmed_' = [confirmed_ EXCEPT ![self] = confirmed_[self] \union {message'[self].from.server}]
                                      /\ IF \/ message'[self].last_leader > selected_history[self].last_leader
                                            \/  /\ message'[self].last_leader = selected_history[self].last_leader
@@ -802,11 +807,11 @@ GetNewLeaderMessage(self) == /\ pc[self] = "GetNewLeaderMessage"
                              /\ \E m \in ReceivableMessages(self, messages) : m.type = NEWLEADER
                              /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = NEWLEADER}:
                                   /\ Assert(CanRecvFrom(self, m.from, messages),
-                                            "Failure of assertion at line 172, column 5 of macro called at line 255, column 13.")
+                                            "Failure of assertion at line 175, column 5 of macro called at line 258, column 13.")
                                   /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                      /\ messages' = Recv(self, m.from, messages)[2]
                                   /\ Assert(message'[self] = m,
-                                            "Failure of assertion at line 174, column 5 of macro called at line 255, column 13.")
+                                            "Failure of assertion at line 177, column 5 of macro called at line 258, column 13.")
                              /\ pc' = [pc EXCEPT ![self] = "HandleNewLeaderMessage"]
                              /\ UNCHANGED << primaries, broadcast_transactions,
                                              stack, confirmed_, latest_epoch,
@@ -843,12 +848,12 @@ GetCommitLDMessage(self) == /\ pc[self] = "GetCommitLDMessage"
                             /\ \E m \in ReceivableMessages(self, messages) : m.type = COMMIT_LD
                             /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = COMMIT_LD}:
                                  /\ Assert(CanRecvFrom(self, m.from, messages),
-                                           "Failure of assertion at line 172, column 5 of macro called at line 272, column 13.")
+                                           "Failure of assertion at line 175, column 5 of macro called at line 275, column 13.")
                                  /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                     /\ messages' = Recv(self, m.from, messages)[2]
                                  /\ Assert(message'[self] = m,
-                                           "Failure of assertion at line 174, column 5 of macro called at line 272, column 13.")
-                            /\ delivered' = [delivered EXCEPT ![self] = delivered[self] \union Range(history[self])]
+                                           "Failure of assertion at line 177, column 5 of macro called at line 275, column 13.")
+                            /\ delivered' = [delivered EXCEPT ![self] = delivered[self] \o history[self]]
                             /\ pc' = [pc EXCEPT ![self] = "End_FP2"]
                             /\ UNCHANGED << primaries, broadcast_transactions,
                                             stack, confirmed_, latest_epoch,
@@ -875,7 +880,7 @@ FP2(self) == GetNewLeaderMessage(self) \/ HandleNewLeaderMessage(self)
 
 LP2Start(self) == /\ pc[self] = "LP2Start"
                   /\ Assert(IsQuorum(followers[self], Servers),
-                            "Failure of assertion at line 286, column 9.")
+                            "Failure of assertion at line 288, column 9.")
                   /\ messages' = SendToSet(({FollowerProc(f) : f \in followers[self]}), (NewLeaderMessage(self, new_epoch[self], selected_history[self].history)), messages)
                   /\ pc' = [pc EXCEPT ![self] = "AwaitCommit"]
                   /\ UNCHANGED << message, primaries, broadcast_transactions,
@@ -891,11 +896,11 @@ AwaitCommit(self) == /\ pc[self] = "AwaitCommit"
                            THEN /\ \E m \in ReceivableMessages(self, messages) : m.type = ACK_LD
                                 /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = ACK_LD}:
                                      /\ Assert(CanRecvFrom(self, m.from, messages),
-                                               "Failure of assertion at line 172, column 5 of macro called at line 292, column 21.")
+                                               "Failure of assertion at line 175, column 5 of macro called at line 294, column 21.")
                                      /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                         /\ messages' = Recv(self, m.from, messages)[2]
                                      /\ Assert(message'[self] = m,
-                                               "Failure of assertion at line 174, column 5 of macro called at line 292, column 21.")
+                                               "Failure of assertion at line 177, column 5 of macro called at line 294, column 21.")
                                 /\ confirmed' = [confirmed EXCEPT ![self] = confirmed[self] \union {message'[self].from.server}]
                                 /\ pc' = [pc EXCEPT ![self] = "AwaitCommit"]
                            ELSE /\ pc' = [pc EXCEPT ![self] = "SendCommitLeader"]
@@ -927,11 +932,11 @@ GetProposalMessage(self) == /\ pc[self] = "GetProposalMessage"
                             /\ \E m \in ReceivableMessages(self, messages) : m.type = PROPOSE /\ m.from = LeaderProc(candidate[self])
                             /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = PROPOSE /\ msg.from = LeaderProc(candidate[self])}:
                                  /\ Assert(CanRecvFrom(self, m.from, messages),
-                                           "Failure of assertion at line 172, column 5 of macro called at line 309, column 13.")
+                                           "Failure of assertion at line 175, column 5 of macro called at line 311, column 13.")
                                  /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                     /\ messages' = Recv(self, m.from, messages)[2]
                                  /\ Assert(message'[self] = m,
-                                           "Failure of assertion at line 174, column 5 of macro called at line 309, column 13.")
+                                           "Failure of assertion at line 177, column 5 of macro called at line 311, column 13.")
                             /\ pc' = [pc EXCEPT ![self] = "HandleProposal"]
                             /\ UNCHANGED << primaries, broadcast_transactions,
                                             stack, confirmed_, latest_epoch,
@@ -962,13 +967,13 @@ GetCommitMessage(self) == /\ pc[self] = "GetCommitMessage"
                           /\ \E m \in ReceivableMessages(self, messages) : m.type = COMMIT /\ m.from = LeaderProc(candidate[self])
                           /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = COMMIT /\ msg.from = LeaderProc(candidate[self])}:
                                /\ Assert(CanRecvFrom(self, m.from, messages),
-                                         "Failure of assertion at line 172, column 5 of macro called at line 326, column 13.")
+                                         "Failure of assertion at line 175, column 5 of macro called at line 328, column 13.")
                                /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                   /\ messages' = Recv(self, m.from, messages)[2]
                                /\ Assert(message'[self] = m,
-                                         "Failure of assertion at line 174, column 5 of macro called at line 326, column 13.")
-                          /\ IF \A trans \in Range(history[self]) : ZxidGreaterThan(message'[self].transaction.zxid, trans.zxid) => trans \in delivered[self]
-                                THEN /\ delivered' = [delivered EXCEPT ![self] = delivered[self] \union {message'[self].transaction}]
+                                         "Failure of assertion at line 177, column 5 of macro called at line 328, column 13.")
+                          /\ IF \A trans \in Range(history[self]) : ZxidGreaterThan(message'[self].transaction.zxid, trans.zxid) => trans \in Range(delivered[self])
+                                THEN /\ delivered' = [delivered EXCEPT ![self] = Append(delivered[self], message'[self].transaction)]
                                 ELSE /\ TRUE
                                      /\ UNCHANGED delivered
                           /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
@@ -985,7 +990,7 @@ FollowerBroadcastCommit(self) == GetCommitMessage(self)
 
 SendProposal(self) == /\ pc[self] = "SendProposal"
                       /\ Assert(IsQuorum(followers[self], Servers),
-                                "Failure of assertion at line 342, column 9.")
+                                "Failure of assertion at line 344, column 9.")
                       /\ messages' = SendToSet(({FollowerProc(f) : f \in followers[self]}), (ProposalMessage(self, new_epoch[self], Transaction(v[self], Zxid(new_epoch[self], counter[self])))), messages)
                       /\ proposed' = [proposed EXCEPT ![self] = Append(proposed[self], Transaction(v[self], Zxid(new_epoch[self], counter[self])))]
                       /\ broadcast_transactions' = (broadcast_transactions \union {Transaction(v[self], Zxid(new_epoch[self], counter[self]))})
@@ -1006,11 +1011,11 @@ GetProposeAckMessage(self) == /\ pc[self] = "GetProposeAckMessage"
                               /\ \E m \in ReceivableMessages(self, messages) : m.type = ACK_P
                               /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = ACK_P}:
                                    /\ Assert(CanRecvFrom(self, m.from, messages),
-                                             "Failure of assertion at line 172, column 5 of macro called at line 357, column 13.")
+                                             "Failure of assertion at line 175, column 5 of macro called at line 359, column 13.")
                                    /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                       /\ messages' = Recv(self, m.from, messages)[2]
                                    /\ Assert(message'[self] = m,
-                                             "Failure of assertion at line 174, column 5 of macro called at line 357, column 13.")
+                                             "Failure of assertion at line 177, column 5 of macro called at line 359, column 13.")
                               /\ proposal_acks' = [proposal_acks EXCEPT ![self][message'[self].transaction, message'[self].epoch] = proposal_acks[self][message'[self].transaction, message'[self].epoch] \union {message'[self].from.server}]
                               /\ pc' = [pc EXCEPT ![self] = "SendCommit"]
                               /\ UNCHANGED << primaries,
@@ -1056,11 +1061,11 @@ GetNewCepochMessage(self) == /\ pc[self] = "GetNewCepochMessage"
                              /\ \E m \in ReceivableMessages(self, messages) : m.type = CEPOCH
                              /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = CEPOCH}:
                                   /\ Assert(CanRecvFrom(self, m.from, messages),
-                                            "Failure of assertion at line 172, column 5 of macro called at line 378, column 13.")
+                                            "Failure of assertion at line 175, column 5 of macro called at line 380, column 13.")
                                   /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                      /\ messages' = Recv(self, m.from, messages)[2]
                                   /\ Assert(message'[self] = m,
-                                            "Failure of assertion at line 174, column 5 of macro called at line 378, column 13.")
+                                            "Failure of assertion at line 177, column 5 of macro called at line 380, column 13.")
                              /\ IF message'[self].last_epoch < new_epoch[self]
                                    THEN /\ pc' = [pc EXCEPT ![self] = "SendNewEpoch"]
                                    ELSE /\ TRUE
@@ -1123,11 +1128,11 @@ GetAckNewLeaderMessage(self) == /\ pc[self] = "GetAckNewLeaderMessage"
                                 /\ \E m \in ReceivableMessages(self, messages) : m.type = ACK_LD
                                 /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = ACK_LD}:
                                      /\ Assert(CanRecvFrom(self, m.from, messages),
-                                               "Failure of assertion at line 172, column 5 of macro called at line 400, column 13.")
+                                               "Failure of assertion at line 175, column 5 of macro called at line 402, column 13.")
                                      /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                         /\ messages' = Recv(self, m.from, messages)[2]
                                      /\ Assert(message'[self] = m,
-                                               "Failure of assertion at line 174, column 5 of macro called at line 400, column 13.")
+                                               "Failure of assertion at line 177, column 5 of macro called at line 402, column 13.")
                                 /\ pc' = [pc EXCEPT ![self] = "HandleAckLeader"]
                                 /\ UNCHANGED << primaries,
                                                 broadcast_transactions, stack,
@@ -1164,11 +1169,11 @@ DiscardAckEpochMessage(self) == /\ pc[self] = "DiscardAckEpochMessage"
                                 /\ \E m \in ReceivableMessages(self, messages) : m.type = ACK_E
                                 /\ \E m \in {msg \in ReceivableMessages(self, messages) : msg.type = ACK_E}:
                                      /\ Assert(CanRecvFrom(self, m.from, messages),
-                                               "Failure of assertion at line 172, column 5 of macro called at line 416, column 13.")
+                                               "Failure of assertion at line 175, column 5 of macro called at line 418, column 13.")
                                      /\ /\ message' = [message EXCEPT ![self] = Recv(self, m.from, messages)[1]]
                                         /\ messages' = Recv(self, m.from, messages)[2]
                                      /\ Assert(message'[self] = m,
-                                               "Failure of assertion at line 174, column 5 of macro called at line 416, column 13.")
+                                               "Failure of assertion at line 177, column 5 of macro called at line 418, column 13.")
                                 /\ pc' = [pc EXCEPT ![self] = Head(stack[self]).pc]
                                 /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                                 /\ UNCHANGED << primaries,
@@ -1424,21 +1429,38 @@ PrimaryUniqueness == \A epoch \in DOMAIN primaries : Cardinality(primaries[epoch
 
 \* Claim 30 in "Dissecting Zab"
 BroadcastIntegrity == \A proc \in DOMAIN delivered :
-                        \A transaction \in delivered[proc] :
+                        \A transaction \in Range(delivered[proc]) :
                             transaction \in broadcast_transactions
 
 \* Claim 31 in "Dissecting Zab"
 \* If a follower f delivers transaction t, and follower f' delivers transaction t', then f' delivers t or f delivers t'
 Agreement == \A p_1 \in DOMAIN delivered, p_2 \in DOMAIN delivered :
                 \/ p_1 = p_2
-                \/ \A t_1 \in delivered[p_1], t_2 \in delivered[p_2] :
-                    \/ t_1 /= t_2
-                    \/ t_1 \in delivered[p_2]
-                    \/ t_2 \in delivered[p_1]
+                \/ \A t_1 \in Range(delivered[p_1]), t_2 \in Range(delivered[p_2]) :
+                    \/ t_1 = t_2
+                    \/ t_1 \in Range(delivered[p_2])
+                    \/ t_2 \in Range(delivered[p_1])
 
+\* Claim 32 in "Dissecting Zab"
+\* If some follower delivers <v,z> before <v',z'>, then any follower that delivers <v',z'> must also deliver <v,z> and
+\* deliver it before <v', z'>.
+TotalOrder == \A p_1 \in DOMAIN delivered, p_2 \in DOMAIN delivered :
+                \/ p_1 = p_2
+                \/ \A i \in 1..Len(delivered[p_1]) : \A j \in i..Len(delivered[p_1]) :
+                    LET t == delivered[p_1][i]
+                        t_p == delivered[p_1][j]
+                        \* indices of the transactions in the second follower
+                        i_t_2 == Indices(t, delivered[p_2])
+                        i_t_p_2 == Indices(t_p, delivered[p_2])
+                    IN t_p \in Range(delivered[p_2]) =>
+                        /\ t \in Range(delivered[p_2])
+                        \* should only have delivered values once
+                        /\ Cardinality(i_t_2) = 1
+                        /\ Cardinality(i_t_p_2) = 1
+                        /\ \A a \in i_t_2, b \in i_t_p_2 : a < b
 
 \** Debugging checks
-ProgressCheck == /\ \E proc \in DOMAIN delivered: Cardinality(delivered[proc]) = 0
+ProgressCheck == /\ \E proc \in DOMAIN delivered: Len(delivered[proc]) < 2
 
 
 
