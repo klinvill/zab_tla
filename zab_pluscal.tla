@@ -1485,9 +1485,6 @@ TotalOrder == \A p_1 \in DOMAIN delivered, p_2 \in DOMAIN delivered :
                             /\ t \in Range(delivered[p_2])
                             /\ \A a \in i_t_2, b \in i_t_p_2 : a < b
 
-\** Debugging checks
-ProgressCheck == /\ \E proc \in DOMAIN delivered: Len(delivered[proc]) < 2
-
 
 
 \* Type checker constraints
