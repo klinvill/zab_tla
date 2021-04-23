@@ -505,7 +505,7 @@ begin
         phase := "FP1_0";
 
     FollowerSynchronize:
-        while phase /= "FP3_0" do
+        while phase /= "FP3_1" do
             either
                 await ~crashed[self];
                 Crash(self);
@@ -528,19 +528,15 @@ begin
                 await phase = "FP2_1";
                 await \E m \in ReceivableMessages(self, messages) : m.type = COMMIT_LD;
                 call FP2_1();
+            or
+                await phase = "FP3_0";
+                SetReady:
+                    if candidate = self.server then
+                        primaries := [primaries EXCEPT ![last_epoch] = primaries[last_epoch] \union {self.server}];
+                    end if;
+                    phase := "FP3_1";
             end either;
         end while;
-
-    SetReady:
-        either
-            await ~crashed[self];
-            Crash(self);
-            goto FollowerCrashed;
-        or
-            if candidate = self.server then
-                primaries := [primaries EXCEPT ![last_epoch] = primaries[last_epoch] \union {self.server}];
-            end if;
-        end either;
 
     FollowerBroadcast:
         while TRUE do
@@ -626,7 +622,7 @@ begin
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "4ae8dba8" /\ chksum(tla) = "d2abac03")
+\* BEGIN TRANSLATION (chksum(pcal) = "a149fcc7" /\ chksum(tla) = "efcaa36")
 \* Procedure variable confirmed of procedure LP1 at line 243 col 11 changed to confirmed_
 CONSTANT defaultInitValue
 VARIABLES messages, message, primaries, broadcast_transactions, crashed,
@@ -1322,7 +1318,7 @@ FollowerDiscover(self) == /\ pc[self] = "FollowerDiscover"
                                           proposed, proposal_acks >>
 
 FollowerSynchronize(self) == /\ pc[self] = "FollowerSynchronize"
-                             /\ IF phase[self] /= "FP3_0"
+                             /\ IF phase[self] /= "FP3_1"
                                    THEN /\ \/ /\ ~crashed[self]
                                               /\ ~crashed[self]
                                               /\ crashed' = [crashed EXCEPT ![self] = TRUE]
@@ -1353,7 +1349,10 @@ FollowerSynchronize(self) == /\ pc[self] = "FollowerSynchronize"
                                                                                    \o stack[self]]
                                               /\ pc' = [pc EXCEPT ![self] = "GetCommitLDMessage"]
                                               /\ UNCHANGED <<crashed, num_crashes>>
-                                   ELSE /\ pc' = [pc EXCEPT ![self] = "SetReady"]
+                                           \/ /\ phase[self] = "FP3_0"
+                                              /\ pc' = [pc EXCEPT ![self] = "SetReady"]
+                                              /\ UNCHANGED <<crashed, num_crashes, stack>>
+                                   ELSE /\ pc' = [pc EXCEPT ![self] = "FollowerBroadcast"]
                                         /\ UNCHANGED << crashed, num_crashes,
                                                         stack >>
                              /\ UNCHANGED << messages, message, primaries,
@@ -1381,23 +1380,17 @@ NotifyLeader(self) == /\ pc[self] = "NotifyLeader"
                                       proposed, proposal_acks >>
 
 SetReady(self) == /\ pc[self] = "SetReady"
-                  /\ \/ /\ ~crashed[self]
-                        /\ ~crashed[self]
-                        /\ crashed' = [crashed EXCEPT ![self] = TRUE]
-                        /\ num_crashes' = num_crashes + 1
-                        /\ pc' = [pc EXCEPT ![self] = "FollowerCrashed"]
-                        /\ UNCHANGED primaries
-                     \/ /\ IF candidate[self] = self.server
-                              THEN /\ primaries' = [primaries EXCEPT ![last_epoch[self]] = primaries[last_epoch[self]] \union {self.server}]
-                              ELSE /\ TRUE
-                                   /\ UNCHANGED primaries
-                        /\ pc' = [pc EXCEPT ![self] = "FollowerBroadcast"]
-                        /\ UNCHANGED <<crashed, num_crashes>>
+                  /\ IF candidate[self] = self.server
+                        THEN /\ primaries' = [primaries EXCEPT ![last_epoch[self]] = primaries[last_epoch[self]] \union {self.server}]
+                        ELSE /\ TRUE
+                             /\ UNCHANGED primaries
+                  /\ phase' = [phase EXCEPT ![self] = "FP3_1"]
+                  /\ pc' = [pc EXCEPT ![self] = "FollowerSynchronize"]
                   /\ UNCHANGED << messages, message, broadcast_transactions,
-                                  stack, confirmed_, latest_epoch, confirmed,
-                                  v, last_epoch, last_leader, history,
-                                  candidate, delivered, restart, phase,
-                                  leader_candidate, followers,
+                                  crashed, num_crashes, stack, confirmed_,
+                                  latest_epoch, confirmed, v, last_epoch,
+                                  last_leader, history, candidate, delivered,
+                                  restart, leader_candidate, followers,
                                   selected_history, new_epoch, counter,
                                   proposed, proposal_acks >>
 
