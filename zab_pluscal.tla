@@ -29,7 +29,7 @@ CONSTANTS MAX_NUM_CRASHES
 \* Represents messages sent from one server to another. Each process has its own channel with each other process.
 \* Maps from the receiver process to the sender process to the messages
 variables messages = [receiver \in Processes |-> [sender \in Processes |-> <<>>]],
-          message = [receiver \in Processes |-> <<>>],              \* Used to temporarily hold a received message
+          message = [receiver \in Processes |-> <<>>],  \* Used to temporarily hold a received message
           primaries = [epoch \in Epochs |-> {}],        \* Maps each epoch to the primaries for that epoch (meaning the processes that call ready)
           broadcast_transactions = {},                  \* Tracks all the transactions that have ever been broadcast
           crashed = [proc \in Processes |-> FALSE],     \* Tracks if a process has crashed
@@ -233,7 +233,7 @@ end macro;
 \*** Crash and Recover macros
 macro Crash(proc)
 begin
-    await ~crashed[proc];
+    assert ~crashed[proc];
     crashed := [crashed EXCEPT ![proc] = TRUE];
     num_crashes := num_crashes + 1;
 end macro;
@@ -241,7 +241,7 @@ end macro;
 \* We wipe state in Recover() rather than in Crash() to ensure we wipe messages sent to a crashed process
 macro Recover(proc)
 begin
-    await crashed[proc];
+    assert crashed[proc];
     crashed := [crashed EXCEPT ![proc] = FALSE];
     FlushMessages(proc);
 end macro;
@@ -597,7 +597,7 @@ begin
         end while;
 
     FollowerCrashed:
-        await crashed[self];
+        assert crashed[self];
         Recover(self);
         goto FollowerDiscover;
 
@@ -683,7 +683,7 @@ begin
 end process;
 
 end algorithm; *)
-\* BEGIN TRANSLATION (chksum(pcal) = "a4c402cd" /\ chksum(tla) = "71dcf668")
+\* BEGIN TRANSLATION (chksum(pcal) = "79998e71" /\ chksum(tla) = "af83170f")
 CONSTANT defaultInitValue
 VARIABLES messages, message, primaries, broadcast_transactions, crashed,
           num_crashes, phase, pc, stack
@@ -1020,7 +1020,8 @@ LP2_1(self) == AwaitCommit(self)
 
 GetProposalMessage(self) == /\ pc[self] = "GetProposalMessage"
                             /\ \/ /\ ~crashed[self]
-                                  /\ ~crashed[self]
+                                  /\ Assert(~crashed[self],
+                                            "Failure of assertion at line 236, column 5 of macro called at line 378, column 13.")
                                   /\ crashed' = [crashed EXCEPT ![self] = TRUE]
                                   /\ num_crashes' = num_crashes + 1
                                   /\ restart' = [restart EXCEPT ![self] = TRUE]
@@ -1047,7 +1048,8 @@ GetProposalMessage(self) == /\ pc[self] = "GetProposalMessage"
 
 HandleProposal(self) == /\ pc[self] = "HandleProposal"
                         /\ \/ /\ ~crashed[self]
-                              /\ ~crashed[self]
+                              /\ Assert(~crashed[self],
+                                        "Failure of assertion at line 236, column 5 of macro called at line 391, column 13.")
                               /\ crashed' = [crashed EXCEPT ![self] = TRUE]
                               /\ num_crashes' = num_crashes + 1
                               /\ restart' = [restart EXCEPT ![self] = TRUE]
@@ -1252,7 +1254,8 @@ FollowerDiscover(self) == /\ pc[self] = "FollowerDiscover"
 FollowerSynchronize(self) == /\ pc[self] = "FollowerSynchronize"
                              /\ IF phase[self] /= "FP3_1"
                                    THEN /\ \/ /\ ~crashed[self]
-                                              /\ ~crashed[self]
+                                              /\ Assert(~crashed[self],
+                                                        "Failure of assertion at line 236, column 5 of macro called at line 536, column 17.")
                                               /\ crashed' = [crashed EXCEPT ![self] = TRUE]
                                               /\ num_crashes' = num_crashes + 1
                                               /\ pc' = [pc EXCEPT ![self] = "FollowerCrashed"]
@@ -1327,7 +1330,8 @@ SetReady(self) == /\ pc[self] = "SetReady"
 
 FollowerBroadcast(self) == /\ pc[self] = "FollowerBroadcast"
                            /\ \/ /\ ~crashed[self]
-                                 /\ ~crashed[self]
+                                 /\ Assert(~crashed[self],
+                                           "Failure of assertion at line 236, column 5 of macro called at line 570, column 21.")
                                  /\ crashed' = [crashed EXCEPT ![self] = TRUE]
                                  /\ num_crashes' = num_crashes + 1
                                  /\ pc' = [pc EXCEPT ![self] = "FollowerCrashed"]
@@ -1408,8 +1412,10 @@ FollowerBroadcastCommitCheckRestart(self) == /\ pc[self] = "FollowerBroadcastCom
                                                              latest_epoch >>
 
 FollowerCrashed(self) == /\ pc[self] = "FollowerCrashed"
-                         /\ crashed[self]
-                         /\ crashed[self]
+                         /\ Assert(crashed[self],
+                                   "Failure of assertion at line 600, column 9.")
+                         /\ Assert(crashed[self],
+                                   "Failure of assertion at line 244, column 5 of macro called at line 601, column 9.")
                          /\ crashed' = [crashed EXCEPT ![self] = FALSE]
                          /\ messages' = [messages EXCEPT ![self] = [sender \in Processes |-> <<>>]]
                          /\ pc' = [pc EXCEPT ![self] = "FollowerDiscover"]
@@ -1448,7 +1454,8 @@ LeaderStart(self) == /\ pc[self] = "LeaderStart"
 LeaderSynchronize(self) == /\ pc[self] = "LeaderSynchronize"
                            /\ IF phase[self] /= "LP3_0"
                                  THEN /\ \/ /\ ~crashed[self]
-                                            /\ ~crashed[self]
+                                            /\ Assert(~crashed[self],
+                                                      "Failure of assertion at line 236, column 5 of macro called at line 630, column 17.")
                                             /\ crashed' = [crashed EXCEPT ![self] = TRUE]
                                             /\ num_crashes' = num_crashes + 1
                                             /\ pc' = [pc EXCEPT ![self] = "LeaderCrashed"]
@@ -1497,7 +1504,8 @@ LeaderSynchronize(self) == /\ pc[self] = "LeaderSynchronize"
 
 LeaderBroadcast(self) == /\ pc[self] = "LeaderBroadcast"
                          /\ \/ /\ ~crashed[self]
-                               /\ ~crashed[self]
+                               /\ Assert(~crashed[self],
+                                         "Failure of assertion at line 236, column 5 of macro called at line 657, column 17.")
                                /\ crashed' = [crashed EXCEPT ![self] = TRUE]
                                /\ num_crashes' = num_crashes + 1
                                /\ pc' = [pc EXCEPT ![self] = "LeaderCrashed"]
@@ -1546,7 +1554,8 @@ LeaderBroadcast(self) == /\ pc[self] = "LeaderBroadcast"
 LeaderCrashed(self) == /\ pc[self] = "LeaderCrashed"
                        /\ Assert(crashed[self],
                                  "Failure of assertion at line 680, column 9.")
-                       /\ crashed[self]
+                       /\ Assert(crashed[self],
+                                 "Failure of assertion at line 244, column 5 of macro called at line 681, column 9.")
                        /\ crashed' = [crashed EXCEPT ![self] = FALSE]
                        /\ messages' = [messages EXCEPT ![self] = [sender \in Processes |-> <<>>]]
                        /\ pc' = [pc EXCEPT ![self] = "LeaderStart"]
