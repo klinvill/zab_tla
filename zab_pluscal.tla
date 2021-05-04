@@ -1586,6 +1586,17 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 \* END TRANSLATION
 
 
+\* Type checker constraints
+MessageLenConstraint == \A proc \in DOMAIN messages: \A sender \in DOMAIN messages[proc] : Len(messages[proc][sender]) <= MAX_MESSAGES
+EpochConstraint == \A proc \in DOMAIN new_epoch : new_epoch[proc] <= MAX_EPOCHS
+CounterConstraint == \A proc \in DOMAIN counter : counter[proc] <= MAX_COUNTER
+NumCrashesConstraint == num_crashes <= MAX_NUM_CRASHES
+
+Constraints == /\ MessageLenConstraint
+               /\ EpochConstraint
+               /\ CounterConstraint
+               /\ NumCrashesConstraint
+
 
 
 \* Type invariant checks
@@ -1611,22 +1622,22 @@ FollowersOK == \A proc \in DOMAIN followers:
                     /\ proc \in LeaderProcesses
                     /\ followers[proc] \in SUBSET Servers
 
-TypeOK == /\ MessagesOK
-          /\ FollowersOK
+TypeOK == Constraints => /\ MessagesOK
+                         /\ FollowersOK
 
 
 \** Protocol invariants
 \* Claim 29 in "Dissecting Zab"
-PrimaryUniqueness == \A epoch \in DOMAIN primaries : Cardinality(primaries[epoch]) <= 1
+PrimaryUniqueness == Constraints => \A epoch \in DOMAIN primaries : Cardinality(primaries[epoch]) <= 1
 
 \* Claim 30 in "Dissecting Zab"
-BroadcastIntegrity == \A proc \in DOMAIN delivered :
+BroadcastIntegrity == Constraints => \A proc \in DOMAIN delivered :
                         \A transaction \in Range(delivered[proc]) :
                             transaction \in broadcast_transactions
 
 \* Claim 31 in "Dissecting Zab"
 \* If a follower f delivers transaction t, and follower f' delivers transaction t', then f' delivers t or f delivers t'
-Agreement == \A p_1 \in DOMAIN delivered, p_2 \in DOMAIN delivered :
+Agreement == Constraints => \A p_1 \in DOMAIN delivered, p_2 \in DOMAIN delivered :
                 \/ p_1 = p_2
                 \/ \A t_1 \in Range(delivered[p_1]), t_2 \in Range(delivered[p_2]) :
                     \/ t_1 = t_2
@@ -1645,7 +1656,7 @@ Agreement == \A p_1 \in DOMAIN delivered, p_2 \in DOMAIN delivered :
 \*      crashes, follower 3 does not join the initial quorum. An empty history is selected as the initial history.
 \*  4) New transactions are proposed, ack'd, committed, and delivered. Now followers 1 and 2 have delivered different
 \*      transactions than follower 3.
-TotalOrder == \A p_1 \in DOMAIN delivered, p_2 \in DOMAIN delivered :
+TotalOrder == Constraints => \A p_1 \in DOMAIN delivered, p_2 \in DOMAIN delivered :
                 \/ p_1 = p_2
                 \/ \A i \in 1..Len(delivered[p_1]) : \A j \in i..Len(delivered[p_1]) :
                     LET t == delivered[p_1][i]
@@ -1658,13 +1669,6 @@ TotalOrder == \A p_1 \in DOMAIN delivered, p_2 \in DOMAIN delivered :
                             /\ t \in Range(delivered[p_2])
                             /\ \A a \in i_t_2, b \in i_t_p_2 : a < b
 
-
-
-\* Type checker constraints
-MessageLenConstraint == \A proc \in DOMAIN messages: \A sender \in DOMAIN messages[proc] : Len(messages[proc][sender]) <= MAX_MESSAGES
-EpochConstraint == \A proc \in DOMAIN new_epoch : new_epoch[proc] <= MAX_EPOCHS
-CounterConstraint == \A proc \in DOMAIN counter : counter[proc] <= MAX_COUNTER
-NumCrashesConstraint == num_crashes <= MAX_NUM_CRASHES
 
 
 ====
