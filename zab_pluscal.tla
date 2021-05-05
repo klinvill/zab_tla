@@ -1606,6 +1606,10 @@ Constraints == /\ MessageLenConstraint
                /\ CounterConstraint
                /\ NumCrashesConstraint
 
+\* TODO: I run into an error when model checking if I use Constraints as the CONSTRAINT, and also use it for the
+\*  invariants. This doesn't occur when running in the TLA+ workbench, but occurs both in VSCode and when model
+\*  checking through the command line. Introducing a separate operator for TLC to use seems to resolve this issue.
+TLCConstraints == Constraints
 
 
 \* Type invariant checks
